@@ -35,14 +35,22 @@ enum Flags {
 };
 
 enum {
-    OPT_INIT = 1,
-    OPT_UPDATE = 2,
-    OPT_UPDATE_BSSH = 4,
+    OPT_INIT,
+    OPT_UPDATE,
+
+    OPT_COUNT
 };
 
+typedef struct {
+    int idx;
+    int num_sub_opts;
+    int max_sub_opts;
+    char *name;
+} Option;
+Option opts[OPT_COUNT];
+Option *cur_opt = NULL;
+
 int flags = 0;
-int sub_options = 0;
-int option = -1;
 
 char *exe_path = NULL;
 char *bas_path = NULL;
@@ -57,7 +65,6 @@ Progress progress = {0};
 
 typedef struct {
     cJSON *data;
-
     cJSON *is_installed_json;
 
     char *path;
@@ -118,16 +125,36 @@ void writeFile(char *name, char *data) {
     }  
 }
 
+void printInitUsage() {
+    char *msg = \
+	  "USAGE\n"\
+	"    bssh init <name> [flags]\n";
+
+    printf("\n%s", msg);
+}
+
+void printUpdateUsage() {
+    char *msg = \
+	  "USAGE\n"\
+	"    bssh update [flags]\n";
+
+    printf("\n%s", msg);
+}
+
+void printUsage(Option *opt) {
+    switch(opt->idx) {
+	case OPT_INIT: printInitUsage(); break;
+	case OPT_UPDATE: printUpdateUsage(); break;
+    }
+}
+
 void printHelp() {
     char *help_msg = \
 	  "USAGE\n"\
 	"    bssh <command> <subcommands> [flags]\n"\
 	"\nCOMMANDS\n"\
-	"    init            Initialized a new project\n"\
-	"    get-pkg         Installs a package from the repository\n"\
-	"    put-pkg         Uploads a package to the reposity\n"\
+	"    new <name>      Initialized a new project\n"\
 	"    update          Updates Basilisk to the latest release\n"\
-	"    update-shell    Updates bssh to the latest release\n"\
 	"\nFLAGS\n"\
 	"    -h, --help      Prints this menu\n"\
 	"    -v, --version   Prints the current engine version\n";
@@ -189,21 +216,30 @@ void parseOption(char *arg) {
 	new_option = OPT_INIT;
     } else if(argCmp(arg, "update")) {
 	new_option = OPT_UPDATE;
-    } else if(argCmp(arg, "update-shell")) {
-	new_option = OPT_UPDATE_BSSH;
     }
 
-    /* Invalid Command */
-    if(new_option == -1) {
-	printf("%s is not a valid command!\n", arg);
+    if(cur_opt == NULL) {
+	/* Invalid Command */
+	if(new_option == -1) {
+	    printf("%s is not a valid command!\n", arg);
+	    exit(1);
+	}
+
+	cur_opt = opts + new_option;
+	return;
+    }
+
+    cur_opt->num_sub_opts++;
+    if(cur_opt->num_sub_opts > cur_opt->max_sub_opts) {
+	printf("%sERROR: %sToo many subcommands\n", RED, RES);
+	printUsage(cur_opt);
 	exit(1);
     }
 
-    if(option == -1) {
-	option = new_option;
+    switch(cur_opt->idx) {
+	case OPT_INIT: cur_opt->name = arg; break;
+	default: printf("%sERROR: %sUnknown subcommand \"%s\"\n", RED, RES, arg); printUsage(cur_opt); exit(1);
     }
-
-    sub_options |= new_option;
 }
 
 void parse(char *arg) {
@@ -219,10 +255,38 @@ void parse(char *arg) {
     parseOption(arg);
 }
 
+void createDir(char *name) {
+#ifdef _WIN32
+    CreateDirectory(cur_opt->name, NULL);
+    int err_win = GetLastError();
+    if(err_win == ERROR_ALREADY_EXISTS) {
+	printf("%sERROR: %sDirectory \"%s\" already exists!\n", RED, RES, cur_opt->name);
+	exit(1);
+    }
+#endif
+
+#if defined(unix) || defined(__unix__) || defined(__unix)
+    struct stat st = {0};
+    if(stat(name &st) == -1) {
+	printf("%sERROR: %sDirectory \"%s\" already exists!\n", RED, RES, cur_opt->name);
+	exit(1);
+    }
+    mkdir(name, 0700);
+#endif
+}
+
 /* COMMANDS */
 void init() {
-    printf("Initializing...\n");
+    if(cur_opt->name == NULL) {
+	printf("Initializes a new project\n");
+	printf("\nUSAGE\n");
+	printf("    bssh new <name> [flags]\n");
+	exit(0);
+    }
+
+    printf("%s\n", cur_opt->name);
 }
+
 void printProgress(int cur_object, int tot_objects, char *color) {
     char str[256];
     int progress25  = (cur_object *  25) / tot_objects;
@@ -245,8 +309,6 @@ void printProgress(int cur_object, int tot_objects, char *color) {
 
 int fetchProgress(const git_transfer_progress *stats, void *payload) {
     progress.index++;
-    if(progress.index % 10 != 0)
-	return 0;
 
     progress.last = progress.object;
     progress.object = stats->received_objects; 
@@ -258,14 +320,6 @@ int fetchProgress(const git_transfer_progress *stats, void *payload) {
 
     return 0;
 }
-
-
-int testProgress(const git_transfer_progress *stats, void *payload) {
-    printf("PROGRESS\n");
-    return 0;
-}
-
-
 
 void loadBsshData() {
     if(bssh.data != NULL)
@@ -284,6 +338,7 @@ void loadBsshData() {
     exe_path = malloc(7);
     strcpy(exe_path, "/proc/\0");
 #endif
+
 #define BSSH_NAME "bssh_data.json"
 #define BASI_NAME "Basilisk"
 
@@ -346,99 +401,30 @@ void fetch(char *url) {
 	    printf("%sERROR:%s Current repository is invalid!\n", RED, RES);
 	    return;
 	}
-
 	return;
     }
 
+    /* Fetch new files */
     git_fetch_options fetch_opts = GIT_FETCH_OPTIONS_INIT;
-    fetch_opts.callbacks.transfer_progress = testProgress;
+    fetch_opts.callbacks.transfer_progress = fetchProgress;
     err = git_remote_lookup(&remote, repo, "origin");
-    printf("%d\n", err);
     err = git_remote_fetch(remote, NULL, &fetch_opts, NULL);
-    printf("%d\n", err);
 
-    git_oid fetch_oid, head_oid;
-    err = git_reference_name_to_id(&fetch_oid, repo, "FETCH_HEAD");
-    printf("%d\n", err);
-    err = git_reference_name_to_id(&head_oid, repo, "HEAD");
-    printf("%d\n", err);
-
-    git_annotated_commit *fetchhead_commit;
-    err = git_annotated_commit_lookup(&fetchhead_commit,
-        repo,
-        &fetch_oid
-    );
-    printf("%d\n", err);
-
-    git_merge_analysis_t analysis;
-    git_merge_preference_t preference;
-    err = git_merge_analysis(&analysis, &preference, repo, (const git_annotated_commit**)&fetchhead_commit, 1);
-
-    if(analysis & GIT_MERGE_ANALYSIS_UP_TO_DATE) {
+    if(progress.tot == 0) {
 	printf("Already up to date.\n");
-	exit(1);
-    }
-    printf("%d\n", analysis);
-    printf("%d\n", GIT_MERGE_ANALYSIS_FASTFORWARD);
-    printf("%d\n", GIT_MERGE_ANALYSIS_NORMAL);
-    printf("%d\n", GIT_MERGE_ANALYSIS_NONE);
-    printf("%d\n", GIT_MERGE_ANALYSIS_UNBORN);
-
-    git_merge_options merge_opts = GIT_MERGE_OPTIONS_INIT;
-    git_checkout_options checkout_opts = GIT_CHECKOUT_OPTIONS_INIT;
-
-    merge_opts.flags = 0;
-    merge_opts.file_flags = GIT_MERGE_FILE_STYLE_DIFF3;
-
-    checkout_opts.checkout_strategy = GIT_CHECKOUT_FORCE|GIT_CHECKOUT_ALLOW_CONFLICTS;
-
-    err = git_merge(repo,
-                    (const git_annotated_commit **)&fetchhead_commit, 1,
-                    &merge_opts, &checkout_opts);
-
-    if(err != 0) {
-	printf("Merge failed! %d\n", err);
-	exit(1);
+	return;
     }
 
-    git_index *index;
-    err = git_repository_index(&index, repo);
+    /* Checkout to FETCH_HEAD, discards local files */
+    git_object *treeish = NULL;
+    git_checkout_options opts = GIT_CHECKOUT_OPTIONS_INIT;
+    opts.checkout_strategy = GIT_CHECKOUT_FORCE;
 
-    if(git_index_has_conflicts(index)) {
-	printf("Conflicts!\n");
-	exit(1);
-    }
+    err = git_revparse_single(&treeish, repo, "FETCH_HEAD");
+    err = git_checkout_tree(repo, treeish, &opts);
 
-    git_oid commit_oid,tree_oid;
-    git_tree *tree;
-    git_object *parent = NULL;
-    git_reference *ref = NULL;
-    git_signature *signature;
-
-    err = git_revparse_ext(&parent, &ref, repo, "HEAD");
-    if (err == GIT_ENOTFOUND) {
-	printf("HEAD not found. Creating first commit\n");
-	err = 0;
-    }
-
-    git_index_write_tree(&tree_oid, index);
-    git_index_write(index);
-    git_tree_lookup(&tree, repo, &tree_oid);
-    git_signature_default(&signature, repo);
-
-    git_commit_create_v(
-	&commit_oid,
-	repo,
-	"HEAD",
-	signature,
-	signature,
-	NULL,
-	"Merged FETCH_HEAD into HEAD",
-	tree,
-	parent ? 1 : 0, parent
-    );
-    git_repository_state_cleanup(repo);
-    printf("Updated! %d\n", err);
+    /* Print progress as green */
+    printProgress(progress.tot, progress.tot, GRN);
 }
 
 void update() {
@@ -447,20 +433,18 @@ void update() {
 
     loadBsshData();
 
+    /* Clone the repo if it's not installed, otherwise fetch newest  */
     if(!bssh.is_installed_json->valueint) {
 	clone("https://github.com/nusbog/Basilisk");
     } else {
 	fetch("https://github.com/nusbog/Basilisk");
     }
+
     printf("%s", RES);
 }
 
-void updateShell() {
-    printf("Updating Shell...\n");
-}
-
 void interpretOpts() {
-    if(option == -1) {
+    if(cur_opt == NULL) {
 	if(hasFlag(FLAG_HELP)) {
 	    printHelp();
 	    return;
@@ -475,16 +459,18 @@ void interpretOpts() {
 	return;
     }
 
-    switch(option) {
+    switch(cur_opt->idx) {
 	case OPT_INIT       : init();        break;
 	case OPT_UPDATE     : update();      break;
-	case OPT_UPDATE_BSSH: updateShell(); break;
     }
 }
 
 int main(int argc, char **argv) {
     argv++;
     argc--;
+
+    opts[OPT_INIT]   = (Option){ OPT_INIT  , 0, 1, NULL };
+    opts[OPT_UPDATE] = (Option){ OPT_UPDATE, 0, 0, NULL };
 
     git_libgit2_init();
 
