@@ -7,16 +7,16 @@ add_executable(${PROJECT_NAME}
 	src/cJSON.c
 )
 
-add_subdirectory(libgit2)
+add_subdirectory(external/libgit2)
 
 target_include_directories(${PROJECT_NAME}
 	PUBLIC include/
-	PUBLIC libgit2/include
+	PUBLIC external/libgit2/include
 )
 
 target_link_directories(${PROJECT_NAME}
 	PRIVATE lib
-	PRIVATE external/libgit2
+	PRIVATE build/external/libgit2
 )
 
 target_link_libraries(${PROJECT_NAME}
