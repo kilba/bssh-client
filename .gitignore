@@ -1,2 +1,6 @@
 build/*
+!build/bssh_data.json/*
+!build/initfiles_win/*
+!build/initfiles_linux/*
+
 .cache/*

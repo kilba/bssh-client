@@ -5,6 +5,7 @@ project(bssh)
 add_executable(${PROJECT_NAME}
 	src/main.c
 	src/cJSON.c
+	src/toml.c
 )
 
 add_subdirectory(external/libgit2)

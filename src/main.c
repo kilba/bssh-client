@@ -16,17 +16,8 @@
 #include <locale.h>
 #include <time.h>
 #include <cJSON.h>
-
-//Regular text
-#define BLK "\e[0;30m"
-#define RED "\e[0;31m"
-#define GRN "\e[0;32m"
-#define YEL "\e[0;33m"
-#define BLU "\e[0;34m"
-#define MAG "\e[0;35m"
-#define CYN "\e[0;36m"
-#define WHT "\e[0;37m"
-#define RES "\e[0m"
+#include <bsshstrs.h>
+#include <toml.h>
 
 enum Flags {
     FLAG_HELP = 1,
@@ -53,6 +44,7 @@ Option *cur_opt = NULL;
 int flags = 0;
 
 char *exe_path = NULL;
+int exe_path_len = 0;
 char *bas_path = NULL;
 
 typedef struct {
@@ -60,6 +52,7 @@ typedef struct {
     int last;
     int object;
     int index;
+    int until_next_print;
 } Progress;
 Progress progress = {0};
 
@@ -72,6 +65,18 @@ typedef struct {
 } BsshData;
 BsshData bssh = {0};
 
+void loadBsshData();
+
+void checkTomlErr(char *name) {
+    switch(toml_err()->code) {
+	case TOML_OK: return;
+	case TOML_ERR_SYNTAX: printf("%sERROR: %sSyntax error in \"%s\"\n", RED, RES, name); exit(1);
+	case TOML_ERR_OS: printf("%sERROR: %s\"%s\" was not found!\n", RED, RES, name); exit(1);
+	case TOML_ERR_UNICODE: printf("%sERROR: %sInvalid unicode scalar in \"%s\n", RED, RES, name); exit(1);
+	default: printf("%sERROR: %sUnknown error when parsing \"%s\"\n", RED, RES, name); return;
+    }
+}
+
 void dataWasEditedError() {
     printf("%sERROR:%s bssh_data.json was edited and is now invalid!\n", RED, RES);
     exit(1);
@@ -83,46 +88,6 @@ bool argCmp(char *first, char *second) {
 
 bool hasFlag(int flag) {
     return (flags & flag) == flag;
-}
-
-char* readFile(char *path, int *content_len, int *errcode) {
-    if(path == 0) {
-        *errcode = 1;
-        return NULL;
-    }
-
-    char *buffer = 0;
-    long length;
-    FILE * f = fopen (path, "rb");
-
-    if (f)
-    {
-      fseek (f, 0, SEEK_END);
-      length = ftell (f) + 1;
-      fseek (f, 0, SEEK_SET);
-      buffer = malloc (length);
-      if (buffer)
-      {
-        fread (buffer, 1, length, f);
-      }
-      fclose (f);
-    } else {
-        *errcode = 2;
-        return NULL;
-    }
-
-    *errcode = 0;
-    *content_len = length;
-    buffer[length - 1] = '\0';
-    return buffer;
-}
-
-void writeFile(char *name, char *data) {
-    FILE *fp = fopen(name, "w");
-    if (fp != NULL) {
-        fputs(data, fp);
-        fclose(fp);
-    }  
 }
 
 void printInitUsage() {
@@ -255,36 +220,139 @@ void parse(char *arg) {
     parseOption(arg);
 }
 
-void createDir(char *name) {
-#ifdef _WIN32
-    CreateDirectory(cur_opt->name, NULL);
-    int err_win = GetLastError();
-    if(err_win == ERROR_ALREADY_EXISTS) {
-	printf("%sERROR: %sDirectory \"%s\" already exists!\n", RED, RES, cur_opt->name);
-	exit(1);
+/* COMMANDS */
+void *initReplaceTable(TomlTable *table_main, int *num_elems_out) {
+    *num_elems_out = 0;
+    TomlTable *table_replace = toml_table_get_as_table(table_main, "replace");
+    if(!table_replace) {
+	printf("%sWARNING:%s The \"replace\" table in \"bssh.toml\" has been removed\n", YEL, RES);
+	return NULL;
     }
-#endif
+    
+    TomlValue *search, *match, *replace;
+    if((search  = toml_table_get(table_replace, "search" )) == NULL) { return NULL; };
+    if((match   = toml_table_get(table_replace, "match"  )) == NULL) { return NULL; };
+    if((replace = toml_table_get(table_replace, "replace")) == NULL) { return NULL; };
 
-#if defined(unix) || defined(__unix__) || defined(__unix)
-    struct stat st = {0};
-    if(stat(name &st) == -1) {
-	printf("%sERROR: %sDirectory \"%s\" already exists!\n", RED, RES, cur_opt->name);
+    TomlArray *asearch, *amatch, *areplace;
+    asearch  = search->value.array;
+    amatch   = match->value.array;
+    areplace = replace->value.array;
+
+    if ((asearch->len != amatch->len) || 
+	(asearch->len != areplace->len) || 
+	(amatch->len  != areplace->len)) {
+	printf("%sERROR: %sThe \"replace\" table in \"bssh.toml\" contains mismatching array lengths\n", RED, RES);
 	exit(1);
     }
-    mkdir(name, 0700);
-#endif
+
+    int num_elems = *num_elems_out = asearch->len;
+    struct ReplaceBuf {
+	char *search, **match, **replace;
+	int num_elems;
+    } *ret = malloc(num_elems * sizeof(struct ReplaceBuf));
+
+
+    for(int i = 0; i < num_elems; i++) {
+	TomlArray *aimatch   = amatch->elements[i]->value.array;
+	TomlArray *aireplace = areplace->elements[i]->value.array;
+	if(aimatch->len != aireplace->len) {
+	    printf("%sERROR: %sThe \"replace\" table in \"bssh.toml\" contains mismatching array lengths\n", RED, RES);
+	    exit(1);
+	}
+
+	struct ReplaceBuf *repl = ret + i;
+	repl->search  = asearch->elements[i]->value.string->str;
+	repl->match   = malloc(aimatch->len * sizeof(char *));
+	repl->replace = malloc(aireplace->len * sizeof(char *));
+	repl->num_elems = aireplace->len;
+
+	for(int j = 0; j < aimatch->len; j++) {
+	    char *aimatch_s   = aimatch->elements[j]->value.string->str;
+	    char *aireplace_s = aireplace->elements[j]->value.string->str;
+	    repl->match[j]   = aimatch_s;
+	    repl->replace[j] = aireplace_s;
+	}
+    }
+    return ret;
 }
 
-/* COMMANDS */
 void init() {
-    if(cur_opt->name == NULL) {
+    char *name = cur_opt->name;
+
+    if(name == NULL) {
 	printf("Initializes a new project\n");
 	printf("\nUSAGE\n");
 	printf("    bssh new <name> [flags]\n");
 	exit(0);
     }
 
-    printf("%s\n", cur_opt->name);
+    loadBsshData();
+
+    int name_len = strlen(name);
+    char path[exe_path_len + sizeof(INITFILES_PATH)];
+
+    sprintf(path, "%s%s", exe_path, INITFILES_PATH);
+
+    /* Parse .TOML data */
+    char settings_path[exe_path_len + sizeof(INITFILES_PATH) + sizeof("/bssh.toml")];
+    sprintf(settings_path, "%s%s", exe_path, INITFILES_PATH "/bssh.toml");
+
+    TomlTable *table_main;
+
+    table_main = toml_load_filename(settings_path);
+    checkTomlErr("bssh.toml");
+   
+    int num_elems;
+    struct ReplaceBuf {
+	char *search, **match, **replace;
+	int num_elems;
+    } *repl = initReplaceTable(table_main, &num_elems);
+
+    char *skip[3 + num_elems];
+    skip[0] = ".";
+    skip[1] = "..";
+    skip[2] = "bssh.toml";
+    for(int i = 0; i < num_elems; i++)
+	skip[i+3] = repl[i].search;
+
+    copyDirSkip(path, name, 3 + num_elems, skip);
+
+    for(int i = 0; i < num_elems; i++) {
+	int strlen_search = strlen(repl[i].search);
+	char repl_path[exe_path_len + sizeof(INITFILES_PATH) + strlen_search + 1];
+	sprintf(repl_path, "%s%s/%s", exe_path, INITFILES_PATH, repl[i].search);
+
+	int err, len;
+	char *repl_contents = readFile(repl_path, &len, &err);
+	char *new_contents = repl_contents;
+	if(err != 0) {
+	    printf("%sWARNING: %sThe file \"%s\" as specified in \"bssh.toml\" was not found\n",
+	    YEL, RES, repl[i].search);
+	    continue;
+	}
+
+	for(int j = 0; j < repl[i].num_elems; j++) {
+	    char *repl_with = repl[i].replace[j];
+	    if(strcmp(repl_with, "PROJ_NAME") == 0) {
+		new_contents = replaceStrStr(new_contents, repl[i].match[j], name);
+	    } else if(strcmp(repl_with, "BASI_PATH") == 0) {
+		char basi_path[exe_path_len + sizeof("Basilisk")];
+		sprintf(basi_path, "%s%s", exe_path, "Basilisk");
+		new_contents = replaceStrStr(new_contents, repl[i].match[j], basi_path);
+	    } else {
+		new_contents = replaceStrStr(new_contents, repl[i].match[j], repl_with);
+	    }
+	}
+	char new_path[name_len + strlen_search + 2];
+	sprintf(new_path, "%s/%s", name, repl[i].search);
+	writeFile(new_path, new_contents);
+
+	free(repl_contents); repl_contents = NULL;
+	free(new_contents);
+    }
+
+    printf("Initialized a new project \"%s\"", name);
 }
 
 void printProgress(int cur_object, int tot_objects, char *color) {
@@ -311,12 +379,11 @@ int fetchProgress(const git_transfer_progress *stats, void *payload) {
     progress.index++;
 
     progress.last = progress.object;
-    progress.object = stats->received_objects; 
+    progress.object = stats->received_objects / (stats->total_objects * 25);
 
     progress.tot = stats->total_objects;
 
-    if(progress.object != progress.last)
-	printProgress(stats->received_objects, stats->total_objects, YEL);
+    printProgress(stats->received_objects, stats->total_objects, YEL);
 
     return 0;
 }
@@ -335,14 +402,18 @@ void loadBsshData() {
 #endif
 
 #if defined(unix) || defined(__unix__) || defined(__unix)
-    exe_path = malloc(7);
-    strcpy(exe_path, "/proc/\0");
+    exe_path = malloc(sizeof(LINUX_SELF_PATH));
+    strcpy(exe_path, LINUX_SELF_PATH);
 #endif
 
 #define BSSH_NAME "bssh_data.json"
 #define BASI_NAME "Basilisk"
 
-    int exe_path_len = strlen(exe_path);
+    exe_path_len = strlen(exe_path);
+    /* Replace '\' with '/' */ /* TODO: Skip this step on UNIX */
+    for(int i = 0; i < exe_path_len; i++)
+	exe_path[i] = (exe_path[i] == '\\') ? '/' : exe_path[i];
+
 
     bssh.path = malloc(exe_path_len + sizeof(BSSH_NAME));
     sprintf(bssh.path, "%s%s", exe_path, BSSH_NAME);
