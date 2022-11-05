@@ -28,11 +28,15 @@ enum Flags {
 enum {
     OPT_INIT,
     OPT_UPDATE,
+    OPT_AUTH,
 
     OPT_COUNT
 };
 
 typedef struct {
+    char *key;
+    void (*func)();
+
     int idx;
     int num_sub_opts;
     int max_sub_opts;
@@ -91,25 +95,44 @@ bool hasFlag(int flag) {
 }
 
 void printInitUsage() {
+    printf("Initializes a new project\n");
+    
     char *msg = \
-	  "USAGE\n"\
-	"    bssh init <name> [flags]\n";
+	  "\nUSAGE\n"\
+	"    bssh new <name> [flags]\n";
 
-    printf("\n%s", msg);
+    printf("%s", msg);
 }
 
 void printUpdateUsage() {
+    printf("Fetches the latest update\n");
+
     char *msg = \
-	  "USAGE\n"\
+	  "\nUSAGE\n"\
 	"    bssh update [flags]\n";
 
-    printf("\n%s", msg);
+    printf("%s", msg);
+}
+
+void printAuthUsage() {
+    printf("Authentication commands\n");
+    char *msg = \
+	  "\nUSAGE\n"\
+	"    bssh auth <command> [flags]\n"\
+	  "\nCOMMANDS\n"\
+	"    create:        Creates a new account\n"\
+	"    login:         Logs in to an account\n"\
+	"    logout:        Logs out of the account\n"\
+	"    2fa:           Adds 2FA to the currently logged in account\n";
+
+    printf("%s", msg);
 }
 
 void printUsage(Option *opt) {
     switch(opt->idx) {
 	case OPT_INIT: printInitUsage(); break;
 	case OPT_UPDATE: printUpdateUsage(); break;
+	case OPT_AUTH: printAuthUsage(); break;
     }
 }
 
@@ -177,11 +200,9 @@ void flag(char *arg, int arg_len) {
 void parseOption(char *arg) {
     int new_option = -1;
 
-    if(argCmp(arg, "new")) {
-	new_option = OPT_INIT;
-    } else if(argCmp(arg, "update")) {
-	new_option = OPT_UPDATE;
-    }
+    for(int i = 0; i < OPT_COUNT; i++)
+	if(argCmp(arg, opts[i].key))
+	    new_option = i;
 
     if(cur_opt == NULL) {
 	/* Invalid Command */
@@ -281,9 +302,7 @@ void init() {
     char *name = cur_opt->name;
 
     if(name == NULL) {
-	printf("Initializes a new project\n");
-	printf("\nUSAGE\n");
-	printf("    bssh new <name> [flags]\n");
+	printInitUsage();
 	exit(0);
     }
 
@@ -355,6 +374,10 @@ void init() {
     printf("Initialized a new project \"%s\"", name);
 }
 
+void auth() {
+    printf("Authing\n");
+}
+
 void printProgress(int cur_object, int tot_objects, char *color) {
     char str[256];
     int progress25  = (cur_object *  25) / tot_objects;
@@ -379,11 +402,12 @@ int fetchProgress(const git_transfer_progress *stats, void *payload) {
     progress.index++;
 
     progress.last = progress.object;
-    progress.object = stats->received_objects / (stats->total_objects * 25);
+    progress.object = (stats->received_objects * 25) / stats->total_objects;
 
     progress.tot = stats->total_objects;
 
-    printProgress(stats->received_objects, stats->total_objects, YEL);
+    if(progress.object != progress.last)
+	printProgress(stats->received_objects, stats->total_objects, YEL);
 
     return 0;
 }
@@ -530,18 +554,60 @@ void interpretOpts() {
 	return;
     }
 
-    switch(cur_opt->idx) {
-	case OPT_INIT       : init();        break;
-	case OPT_UPDATE     : update();      break;
-    }
+    cur_opt->func();
+}
+
+wchar_t getsub(char ascii) {
+    const wchar_t table[] = { 
+	L'ᵃ', L'ᵇ', L'ᶜ', L'ᵈ', L'ᵉ', L'ᶠ', L'ᵍ',
+	L'ʰ', L'ⁱ', L'ʲ', L'ᵏ', L'ˡ', L'ᵐ', L'ⁿ',
+	L'ᵒ', L'ᵖ', L'ᵖ', L'ʳ', L'ˢ', L'ᵗ', L'ᵘ',
+	L'ᵛ', L'ʷ', L'ˣ', L'ʸ', L'ᶻ',
+
+	L'ᴬ', L'ᴮ', L'ꟲ', L'ᴰ', L'ᴱ', L'ꟳ', L'ᴳ',
+	L'ᴴ', L'ᴵ', L'ᴶ', L'ᴷ', L'ᴸ', L'ᴹ', L'ᴺ',
+	L'ᴼ', L'ᴾ', L'ꟴ', L'ᴿ', L'ˢ', L'ᵀ', L'ᵁ', 
+	L'ⱽ', L'ᵂ', L'ˣ', L'ʸ', L'ᶻ'
+    };
+
+    if(ascii >= 'a' && ascii <= 'z')
+	return table[ascii - 'a'];
+
+    if(ascii >= 'A' && ascii <= 'Z')
+	return table[ascii - 'A'];
+
+    return ' ';
 }
 
 int main(int argc, char **argv) {
+    /*
+    char *name = "kilba";
+    wchar_t wname[strlen(name)+1];
+    for(int i = 0; i < strlen(name); i++)
+	wname[i] = getsub(name[i]);
+
+    _setmode(_fileno(stdout), _O_U16TEXT);
+    for(int i = 0; i < strlen(name)+1; i++) {
+	wchar_t curr[strlen(name)+1];
+	for(int j = 0; j < strlen(name); j++) {
+	    curr[j] = (i == j) ? wname[j] : name[j];
+	}
+	curr[strlen(name)] = '\0';
+	wprintf(L"\rWelcome, %s%S%s", MAG, curr, RES);
+
+	Sleep(80);
+    }
+
+    _setmode(_fileno(stdout), _O_TEXT);
+    printf("%s", RES);
+
+    return 0;*/
     argv++;
     argc--;
 
-    opts[OPT_INIT]   = (Option){ OPT_INIT  , 0, 1, NULL };
-    opts[OPT_UPDATE] = (Option){ OPT_UPDATE, 0, 0, NULL };
+    opts[OPT_INIT]   = (Option){ "new"   , init  , OPT_INIT  , 0, 1, NULL };
+    opts[OPT_UPDATE] = (Option){ "update", update, OPT_UPDATE, 0, 0, NULL };
+    opts[OPT_AUTH]   = (Option){ "auth"  , auth  , OPT_AUTH  , 0, 1, NULL };
 
     git_libgit2_init();
 
