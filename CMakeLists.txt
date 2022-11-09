@@ -6,6 +6,8 @@ add_executable(${PROJECT_NAME}
 	src/main.c
 	src/cJSON.c
 	src/toml.c
+	src/net.c
+	src/qrcodegen.c
 )
 
 add_subdirectory(external/libgit2)

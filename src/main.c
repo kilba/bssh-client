@@ -1,23 +1,24 @@
-#include "git2/commit.h"
-#include "git2/errors.h"
-#include "git2/index.h"
-#include "git2/merge.h"
-#include "git2/remote.h"
-#include "git2/signature.h"
-#include "git2/types.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
-#include <git2.h>
-#include <windows.h>
 #include <math.h>
-#include <wchar.h>
-#include <locale.h>
-#include <time.h>
+#include <conio.h>
+
+#include <net.h>
+#include <git2.h>
 #include <cJSON.h>
-#include <bsshstrs.h>
 #include <toml.h>
+#include <bsshstrs.h>
+#include <qrcodegen.h>
+
+#ifdef _WIN32
+    #include <winsock.h>
+    #include <windows.h>
+    #include <wchar.h>
+    #include <locale.h>
+    #include <time.h>
+#endif
 
 enum Flags {
     FLAG_HELP = 1,
@@ -36,16 +37,26 @@ enum {
 typedef struct {
     char *key;
     void (*func)();
+    void (*usage)();
 
     int idx;
     int num_sub_opts;
+    int min_sub_opts;
     int max_sub_opts;
-    char *name;
+    char *args[4];
 } Option;
 Option opts[OPT_COUNT];
 Option *cur_opt = NULL;
 
+#define TYPE 0
+
+#define NAME 0
+
+#define USER 1
+#define PASS 2
+
 int flags = 0;
+int arg_offset = 0;
 
 char *exe_path = NULL;
 int exe_path_len = 0;
@@ -222,10 +233,8 @@ void parseOption(char *arg) {
 	exit(1);
     }
 
-    switch(cur_opt->idx) {
-	case OPT_INIT: cur_opt->name = arg; break;
-	default: printf("%sERROR: %sUnknown subcommand \"%s\"\n", RED, RES, arg); printUsage(cur_opt); exit(1);
-    }
+    cur_opt->args[arg_offset++] = arg;
+//	default: printf("%sERROR: %sUnknown subcommand \"%s\"\n", RED, RES, arg); printUsage(cur_opt); exit(1);
 }
 
 void parse(char *arg) {
@@ -299,7 +308,7 @@ void *initReplaceTable(TomlTable *table_main, int *num_elems_out) {
 }
 
 void init() {
-    char *name = cur_opt->name;
+    char *name = cur_opt->args[NAME];
 
     if(name == NULL) {
 	printInitUsage();
@@ -374,8 +383,134 @@ void init() {
     printf("Initialized a new project \"%s\"", name);
 }
 
+typedef struct {
+    char *key, *value;
+} clog_Header;
+
+#define CLOG_HEADER(key, value) (clog_Header){ key, value }
+#define BEG_HTTP_1_1 "GET / HTTP/1.1\r\nHost: "
+#define END_HTTP_1_1 "Connection: close\r\n\r\n"
+
+void clog_get(char *url, int port, char *body, int header_count, clog_Header *headers) {
+    int err = 0;
+    Clog chost;
+
+    /* Calculate HTTP data length */
+    int send_buf_len;
+    send_buf_len  = sizeof(BEG_HTTP_1_1);
+    send_buf_len += sizeof(END_HTTP_1_1);
+    send_buf_len += strlen(url);
+    send_buf_len += strlen(body);
+    send_buf_len += 2; // "\r\n"
+    for(int i = 0; i < header_count; i++) {
+	clog_Header *header = headers + i;
+	send_buf_len += strlen(header->key);
+	send_buf_len += strlen(header->value);
+	send_buf_len += 4; // ':', ' ', '\r', '\n'
+    }
+
+    /* Set the HTTP data */
+    char send_buf[send_buf_len];
+    int offset = 0;
+    offset += sprintf(send_buf, "%s%s\r\n", BEG_HTTP_1_1, url);
+    for(int i = 0; i < header_count; i++)
+	offset += sprintf(send_buf + offset, "%s: %s\r\n", headers[i].key, headers[i].value);
+    offset += sprintf(send_buf + offset, "\r\n\r\n%s", body);
+
+    /* Send the HTTP data */
+    char recv_buf[512];
+    err = clog_connect(url, port, &chost);
+    err = clog_send(&chost, send_buf, offset);
+    err = clog_recv( chost, recv_buf, 512);
+}
+
+// TODO: Linux
+void passInput(char *buf) {
+    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE); 
+    DWORD mode = 0;
+    GetConsoleMode(hStdin, &mode);
+    SetConsoleMode(hStdin, mode & (~ENABLE_ECHO_INPUT));
+
+    scanf("%31s", buf);
+
+    SetConsoleMode(hStdin, mode & ( ENABLE_ECHO_INPUT));
+    printf("\n");
+}
+
+#define QR_FUL 219 
+#define QR_BOT 220
+#define QR_TOP 223
+
+#define BLE		"\x1b[38;2;105;120;237m"
+#define PUR		"\x1b[38;2;185;70;237m"
+#define GRE		"\x1b[38;2;105;160;125m"
+#define ORA		"\x1b[38;2;250;120;100m"
+#define YLL		"\x1b[38;2;200;60;120m"
+#define WHEB		"\e[47m"
+#define WHE		"\e[1;37m"
+#define GRY		"\x1b[38;2;50;50;50m"
+
 void auth() {
-    printf("Authing\n");
+uint8_t qr0[qrcodegen_BUFFER_LEN_MAX];
+uint8_t tempBuffer[qrcodegen_BUFFER_LEN_MAX];
+char *buf = "HBGUUSTGINMTIRKSIJ2G65DWMVXFGYZT";
+bool ok = qrcodegen_encodeText(buf,
+    tempBuffer, qr0, qrcodegen_Ecc_MEDIUM,
+    qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX,
+    qrcodegen_Mask_AUTO, true);
+if (!ok)
+    return;
+
+int size = qrcodegen_getSize(qr0);
+
+    printf("%s  ________[ QR CODE ]________%s\n", WHE, RES);
+    printf("%s  ", WHE);
+    
+    for(int i = 0; i < size+2; i++)
+	printf("%c", QR_BOT);
+
+    printf("%s\n", RES);
+
+    for (int y = 0; y < size; y+=2) {
+	printf("  %s%s ", WHEB, GRY);
+
+	for (int x = 0; x < size; x++) {
+	    bool top = qrcodegen_getModule(qr0, x, y + 0);
+	    bool bot = qrcodegen_getModule(qr0, x, y + 1);
+	    
+	    if(top && bot) {
+		printf("%c", QR_FUL);
+	    } else if(top) {
+		printf("%c", QR_TOP);
+	    } else if(bot) {
+		printf("%c", QR_BOT);
+	    } else {
+		printf(" ");
+	    }
+	}
+	printf(" %s", RES);
+
+	switch(y) {
+	    case 2: printf("Username : kilba"); break;
+	    case 4: printf("Mail     : none"); break;
+	}
+
+	printf("\n");
+    }
+
+    return;
+    char user[32], pass[32], passc[32];
+
+    printf("Username: ");
+    scanf("%31s", user);
+
+    clog_Header headers[] = {
+	CLOG_HEADER("Type", "auth"),
+	CLOG_HEADER("User", "henry"),
+	CLOG_HEADER("Pass", "oefweoå"),
+    };
+
+    clog_get("192.168.10.189", 8001, "test", sizeof(headers) / sizeof(clog_Header), headers);
 }
 
 void printProgress(int cur_object, int tot_objects, char *color) {
@@ -554,6 +689,12 @@ void interpretOpts() {
 	return;
     }
 
+    if(cur_opt->num_sub_opts < cur_opt->min_sub_opts) {
+	printf("%sERROR: %sToo few subcommands\n", RED, RES);
+	cur_opt->usage();
+	exit(1);
+    }
+
     cur_opt->func();
 }
 
@@ -605,9 +746,9 @@ int main(int argc, char **argv) {
     argv++;
     argc--;
 
-    opts[OPT_INIT]   = (Option){ "new"   , init  , OPT_INIT  , 0, 1, NULL };
-    opts[OPT_UPDATE] = (Option){ "update", update, OPT_UPDATE, 0, 0, NULL };
-    opts[OPT_AUTH]   = (Option){ "auth"  , auth  , OPT_AUTH  , 0, 1, NULL };
+    opts[OPT_INIT]   = (Option){ "new"   , init  , printInitUsage  , OPT_INIT  , 0, 1, 1, { NULL }};
+    opts[OPT_UPDATE] = (Option){ "update", update, printUpdateUsage, OPT_UPDATE, 0, 0, 0, { NULL }};
+    opts[OPT_AUTH]   = (Option){ "auth"  , auth  , printAuthUsage  , OPT_AUTH  , 0, 1, 1, { NULL }};
 
     git_libgit2_init();
 
