@@ -20,6 +20,19 @@
     #include <time.h>
 #endif
 
+#define HOST "192.168.10.189"
+#define PORT 8001
+
+enum RecvErrors {
+    OK,
+    INVALID_HEADER,
+    INVALID_TOKEN,
+    USER_ALREADY_EXISTS,
+    SKIPPED_STEP,
+    EXPIRED,
+    TOO_MANY_ATTEMPTS,
+};
+
 enum Flags {
     FLAG_HELP = 1,
     FLAG_VERSION = 2,
@@ -387,11 +400,16 @@ typedef struct {
     char *key, *value;
 } clog_Header;
 
+typedef struct {
+    char *full, *body;
+    int content_len;
+} clog_httpData;
+
 #define CLOG_HEADER(key, value) (clog_Header){ key, value }
 #define BEG_HTTP_1_1 "GET / HTTP/1.1\r\nHost: "
 #define END_HTTP_1_1 "Connection: close\r\n\r\n"
 
-void clog_get(char *url, int port, char *body, int header_count, clog_Header *headers) {
+clog_httpData clog_get(char *url, int port, char *body, int header_count, clog_Header *headers, int recv_len) {
     int err = 0;
     Clog chost;
 
@@ -417,11 +435,20 @@ void clog_get(char *url, int port, char *body, int header_count, clog_Header *he
 	offset += sprintf(send_buf + offset, "%s: %s\r\n", headers[i].key, headers[i].value);
     offset += sprintf(send_buf + offset, "\r\n\r\n%s", body);
 
-    /* Send the HTTP data */
-    char recv_buf[512];
+    /* Send and recv the HTTP data */
+    clog_httpData recv_data;
+    char *recv = malloc(recv_len);
+    int siz = 0;
+
     err = clog_connect(url, port, &chost);
     err = clog_send(&chost, send_buf, offset);
-    err = clog_recv( chost, recv_buf, 512);
+    siz = clog_recv(chost, recv, recv_len);
+
+    recv[siz] = '\0';
+    recv_data.full = recv;
+    recv_data.body = strstr(recv, "\r\n\r\n") + 4;
+
+    return recv_data;
 }
 
 // TODO: Linux
@@ -450,27 +477,168 @@ void passInput(char *buf) {
 #define WHE		"\e[1;37m"
 #define GRY		"\x1b[38;2;50;50;50m"
 
+wchar_t subscript(char ascii) {
+    const wchar_t table[] = { 
+	L'ᵃ', L'ᵇ', L'ᶜ', L'ᵈ', L'ᵉ', L'ᶠ', L'ᵍ',
+	L'ʰ', L'ⁱ', L'ʲ', L'ᵏ', L'ˡ', L'ᵐ', L'ⁿ',
+	L'ᵒ', L'ᵖ', L'ᵖ', L'ʳ', L'ˢ', L'ᵗ', L'ᵘ',
+	L'ᵛ', L'ʷ', L'ˣ', L'ʸ', L'ᶻ',
+
+	L'ᴬ', L'ᴮ', L'ꟲ', L'ᴰ', L'ᴱ', L'ꟳ', L'ᴳ',
+	L'ᴴ', L'ᴵ', L'ᴶ', L'ᴷ', L'ᴸ', L'ᴹ', L'ᴺ',
+	L'ᴼ', L'ᴾ', L'ꟴ', L'ᴿ', L'ˢ', L'ᵀ', L'ᵁ', 
+	L'ⱽ', L'ᵂ', L'ˣ', L'ʸ', L'ᶻ'
+    };
+
+    if(ascii >= 'a' && ascii <= 'z')
+	return table[ascii - 'a'];
+
+    if(ascii >= 'A' && ascii <= 'Z')
+	return table[ascii - 'A'];
+
+    return ' ';
+}
+
+void welcomeText(char *name) {
+    int strlen_name = strlen(name) + 1;
+
+    wchar_t wname[strlen_name];
+    for(int i = 0; i < strlen_name; i++)
+	wname[i] = subscript(name[i]);
+
+    _setmode(_fileno(stdout), _O_U16TEXT);
+    for(int i = 0; i < strlen_name; i++) {
+	if(i == 0)
+	    Sleep(200);
+	wchar_t curr[strlen_name];
+	for(int j = 0; j < (strlen_name-1); j++) {
+	    curr[j] = (i == j) ? wname[j] : name[j];
+	}
+	curr[strlen(name)] = '\0';
+	wprintf(L"\rWelcome, %s%S%s", GRE, curr, RES);
+
+	Sleep(80);
+    }
+
+    _setmode(_fileno(stdout), _O_TEXT);
+    printf("%s", RES);
+}
+
+void auth();
+void checkAuthError(int stat) {
+    switch(stat) {
+	case OK: break;
+
+	case INVALID_HEADER      : printf("%sERROR: %sInvalid header\n", RED, RES); exit(1);
+	case INVALID_TOKEN       : printf("%sERROR: %sInvalid token\n", RED, RES); break;
+	case USER_ALREADY_EXISTS : printf("%sERROR: %sUser already exists\n\n", RED, RES); auth(); break;
+	case SKIPPED_STEP        : printf("%sERROR: %sSkipped authentication step\n", RED, RES); exit(1);
+	case EXPIRED             : printf("%sERROR: %sTime has expired\n\n", RED, RES); auth(); break;
+	case TOO_MANY_ATTEMPTS   : printf("%sERROR: %sToo many failed attempts\n\n", RED, RES); exit(1);
+
+	default: break;
+    }
+}
+
 void auth() {
-uint8_t qr0[qrcodegen_BUFFER_LEN_MAX];
-uint8_t tempBuffer[qrcodegen_BUFFER_LEN_MAX];
-char *buf = "HBGUUSTGINMTIRKSIJ2G65DWMVXFGYZT";
-bool ok = qrcodegen_encodeText(buf,
-    tempBuffer, qr0, qrcodegen_Ecc_MEDIUM,
-    qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX,
-    qrcodegen_Mask_AUTO, true);
-if (!ok)
-    return;
+    char user[32], mail[64];
+    int *stat = NULL;
 
-int size = qrcodegen_getSize(qr0);
+    printf("Username (1/2) : ");
+    scanf("%31s", user);
+    printf("Email    (2/2) : ");
+    scanf("%31s", mail);
+    printf("\n");
 
-    printf("%s  ________[ QR CODE ]________%s\n", WHE, RES);
-    printf("%s  ", WHE);
+    /* STEP 1 - Get mail verification code */
+    clog_Header headers[] = {
+	CLOG_HEADER("Type", "auth_0"),
+	CLOG_HEADER("User", user),
+	CLOG_HEADER("Mail", mail),
+    };
+
+    printf("Sending email verification...\n");
     
+    clog_httpData data;
+    data = clog_get(HOST, PORT, "", sizeof(headers) / sizeof(clog_Header), headers, 1024);
+    stat = (int *)data.body;
+    checkAuthError(*stat);
+    free(data.full);
+
+    printf("Sent!\n\n");
+
+    /* STEP 2 - Confirm mail verification code */
+    int i;
+    for(i = 0; i < 3; i++) {
+	char emtok[9];
+	printf("Enter the token sent to your email: ");
+	scanf("%8s", emtok);
+
+	clog_Header headers2[] = {
+	    CLOG_HEADER("Type", "auth_1"),
+	    CLOG_HEADER("User", user),
+	    CLOG_HEADER("Toke", emtok),
+	};
+
+	data = clog_get(HOST, PORT, "", sizeof(headers2) / sizeof(clog_Header), headers2, 1024);
+	int stat = *(int *)data.body;
+	checkAuthError(stat);
+	free(data.full);
+
+	if(stat == OK)
+	    break;
+    }
+
+    /* STEP 3 - TOTP */
+    clog_Header headers3[] = {
+	CLOG_HEADER("Type", "auth_2"),
+	CLOG_HEADER("User", user),
+    };
+
+    data = clog_get(HOST, PORT, "", sizeof(headers3) / sizeof(clog_Header), headers3, 1024);
+    stat = (int *)data.body;
+    checkAuthError(*stat);
+
+    data.body += sizeof(int);
+    free(data.full);
+
+    uint8_t qr0[qrcodegen_BUFFER_LEN_MAX];
+    uint8_t tempBuffer[qrcodegen_BUFFER_LEN_MAX];
+    char *qr_buf = data.body;
+
+    bool ok = qrcodegen_encodeText(qr_buf,
+	tempBuffer, qr0, qrcodegen_Ecc_MEDIUM,
+	qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX,
+	qrcodegen_Mask_AUTO, true);
+
+    if (!ok) {
+	printf("%sERROR: %sQR Code could not be generated!\n", RED, RES);
+	exit(1);
+    }
+
+    /* Print "____[ QR CODE ]____, based on qr code width" */
+    int size = qrcodegen_getSize(qr0);
+
+    float underscore_len;
+    underscore_len  = (float)size / 2.0 + 1.0;
+    underscore_len -= sizeof("[ QR Code ]") / 2.0;
+    underscore_len  = ceil(underscore_len);
+
+    printf("\n  ");
+    for(int i = 0; i < underscore_len; i++)
+	printf("_");
+    printf("[ QR CODE ]");
+    for(int i = 0; i < underscore_len; i++)
+	printf("_");
+    printf("\n%s  ", WHE);
+
+    /* Print row of bottom halves */
     for(int i = 0; i < size+2; i++)
 	printf("%c", QR_BOT);
 
     printf("%s\n", RES);
 
+    /* Display QR Code */
     for (int y = 0; y < size; y+=2) {
 	printf("  %s%s ", WHEB, GRY);
 
@@ -491,26 +659,39 @@ int size = qrcodegen_getSize(qr0);
 	printf(" %s", RES);
 
 	switch(y) {
-	    case 2: printf("Username : kilba"); break;
-	    case 4: printf("Mail     : none"); break;
-	}
+	    case 2 : printf("    Username : %s%s%s", GRE, user, RES); break;
+	    case 4 : printf("    Mail     : %s%s%s", GRE, mail, RES); break;
+	} 
 
 	printf("\n");
     }
 
+    printf("\n  ");
+
+    for(i = 0; i < 3; i++) {
+	char totp[8];
+	printf("Enter the TOTP: ");
+	fflush (stdin);
+	fgets(totp, 8, stdin);
+
+	clog_Header headers4[] = {
+	    CLOG_HEADER("Type", "auth_3"),
+	    CLOG_HEADER("User", user),
+	    CLOG_HEADER("Totp", totp),
+	};
+
+	data = clog_get(HOST, PORT, "", sizeof(headers4) / sizeof(clog_Header), headers4, 1024);
+	int stat = *(int *)data.body;
+	checkAuthError(stat);
+	free(data.full);
+
+	if(stat == OK)
+	    break;
+    }
+
+    printf("\nAccount created");
+    welcomeText(user);
     return;
-    char user[32], pass[32], passc[32];
-
-    printf("Username: ");
-    scanf("%31s", user);
-
-    clog_Header headers[] = {
-	CLOG_HEADER("Type", "auth"),
-	CLOG_HEADER("User", "henry"),
-	CLOG_HEADER("Pass", "oefweoå"),
-    };
-
-    clog_get("192.168.10.189", 8001, "test", sizeof(headers) / sizeof(clog_Header), headers);
 }
 
 void printProgress(int cur_object, int tot_objects, char *color) {
@@ -698,51 +879,7 @@ void interpretOpts() {
     cur_opt->func();
 }
 
-wchar_t getsub(char ascii) {
-    const wchar_t table[] = { 
-	L'ᵃ', L'ᵇ', L'ᶜ', L'ᵈ', L'ᵉ', L'ᶠ', L'ᵍ',
-	L'ʰ', L'ⁱ', L'ʲ', L'ᵏ', L'ˡ', L'ᵐ', L'ⁿ',
-	L'ᵒ', L'ᵖ', L'ᵖ', L'ʳ', L'ˢ', L'ᵗ', L'ᵘ',
-	L'ᵛ', L'ʷ', L'ˣ', L'ʸ', L'ᶻ',
-
-	L'ᴬ', L'ᴮ', L'ꟲ', L'ᴰ', L'ᴱ', L'ꟳ', L'ᴳ',
-	L'ᴴ', L'ᴵ', L'ᴶ', L'ᴷ', L'ᴸ', L'ᴹ', L'ᴺ',
-	L'ᴼ', L'ᴾ', L'ꟴ', L'ᴿ', L'ˢ', L'ᵀ', L'ᵁ', 
-	L'ⱽ', L'ᵂ', L'ˣ', L'ʸ', L'ᶻ'
-    };
-
-    if(ascii >= 'a' && ascii <= 'z')
-	return table[ascii - 'a'];
-
-    if(ascii >= 'A' && ascii <= 'Z')
-	return table[ascii - 'A'];
-
-    return ' ';
-}
-
 int main(int argc, char **argv) {
-    /*
-    char *name = "kilba";
-    wchar_t wname[strlen(name)+1];
-    for(int i = 0; i < strlen(name); i++)
-	wname[i] = getsub(name[i]);
-
-    _setmode(_fileno(stdout), _O_U16TEXT);
-    for(int i = 0; i < strlen(name)+1; i++) {
-	wchar_t curr[strlen(name)+1];
-	for(int j = 0; j < strlen(name); j++) {
-	    curr[j] = (i == j) ? wname[j] : name[j];
-	}
-	curr[strlen(name)] = '\0';
-	wprintf(L"\rWelcome, %s%S%s", MAG, curr, RES);
-
-	Sleep(80);
-    }
-
-    _setmode(_fileno(stdout), _O_TEXT);
-    printf("%s", RES);
-
-    return 0;*/
     argv++;
     argc--;
 

@@ -35,7 +35,7 @@ int clog_recvUdp(Clog *stream, char *buf, int data_len) {
 int clog_recv(Clog str, char *msg, int size) {
     int num_bytes = recv(str.sock_tcp, msg, size, 0);
     if(num_bytes == SOCKET_ERROR)
-        return WSAGetLastError();
+        return SOCKET_ERROR;
 
     return num_bytes;
 }
