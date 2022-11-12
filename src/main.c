@@ -23,15 +23,9 @@
 #define HOST "192.168.10.189"
 #define PORT 8001
 
-enum RecvErrors {
-    OK,
-    INVALID_HEADER,
-    INVALID_TOKEN,
-    USER_ALREADY_EXISTS,
-    SKIPPED_STEP,
-    EXPIRED,
-    TOO_MANY_ATTEMPTS,
-};
+#define QR_FUL 219 
+#define QR_BOT 220
+#define QR_TOP 223
 
 enum Flags {
     FLAG_HELP = 1,
@@ -90,10 +84,17 @@ typedef struct {
 
     char *path;
     bool has_changed;
+    bool logged_in;
 } BsshData;
 BsshData bssh = {0};
 
 void loadBsshData();
+
+char *userInput(char *buf, int len) {
+    buf = fgets(buf, 32, stdin);
+    buf[strcspn(buf, "\n")] = 0;
+    return buf;
+}
 
 void checkTomlErr(char *name) {
     switch(toml_err()->code) {
@@ -145,19 +146,10 @@ void printAuthUsage() {
 	"    bssh auth <command> [flags]\n"\
 	  "\nCOMMANDS\n"\
 	"    create:        Creates a new account\n"\
-	"    login:         Logs in to an account\n"\
-	"    logout:        Logs out of the account\n"\
-	"    2fa:           Adds 2FA to the currently logged in account\n";
+	"    login :        Logs in to an account\n"\
+	"    logout:        Logs out of the account\n";
 
     printf("%s", msg);
-}
-
-void printUsage(Option *opt) {
-    switch(opt->idx) {
-	case OPT_INIT: printInitUsage(); break;
-	case OPT_UPDATE: printUpdateUsage(); break;
-	case OPT_AUTH: printAuthUsage(); break;
-    }
 }
 
 void printHelp() {
@@ -242,12 +234,11 @@ void parseOption(char *arg) {
     cur_opt->num_sub_opts++;
     if(cur_opt->num_sub_opts > cur_opt->max_sub_opts) {
 	printf("%sERROR: %sToo many subcommands\n", RED, RES);
-	printUsage(cur_opt);
+	cur_opt->usage();
 	exit(1);
     }
 
     cur_opt->args[arg_offset++] = arg;
-//	default: printf("%sERROR: %sUnknown subcommand \"%s\"\n", RED, RES, arg); printUsage(cur_opt); exit(1);
 }
 
 void parse(char *arg) {
@@ -396,87 +387,6 @@ void init() {
     printf("Initialized a new project \"%s\"", name);
 }
 
-typedef struct {
-    char *key, *value;
-} clog_Header;
-
-typedef struct {
-    char *full, *body;
-    int content_len;
-} clog_httpData;
-
-#define CLOG_HEADER(key, value) (clog_Header){ key, value }
-#define BEG_HTTP_1_1 "GET / HTTP/1.1\r\nHost: "
-#define END_HTTP_1_1 "Connection: close\r\n\r\n"
-
-clog_httpData clog_get(char *url, int port, char *body, int header_count, clog_Header *headers, int recv_len) {
-    int err = 0;
-    Clog chost;
-
-    /* Calculate HTTP data length */
-    int send_buf_len;
-    send_buf_len  = sizeof(BEG_HTTP_1_1);
-    send_buf_len += sizeof(END_HTTP_1_1);
-    send_buf_len += strlen(url);
-    send_buf_len += strlen(body);
-    send_buf_len += 2; // "\r\n"
-    for(int i = 0; i < header_count; i++) {
-	clog_Header *header = headers + i;
-	send_buf_len += strlen(header->key);
-	send_buf_len += strlen(header->value);
-	send_buf_len += 4; // ':', ' ', '\r', '\n'
-    }
-
-    /* Set the HTTP data */
-    char send_buf[send_buf_len];
-    int offset = 0;
-    offset += sprintf(send_buf, "%s%s\r\n", BEG_HTTP_1_1, url);
-    for(int i = 0; i < header_count; i++)
-	offset += sprintf(send_buf + offset, "%s: %s\r\n", headers[i].key, headers[i].value);
-    offset += sprintf(send_buf + offset, "\r\n\r\n%s", body);
-
-    /* Send and recv the HTTP data */
-    clog_httpData recv_data;
-    char *recv = malloc(recv_len);
-    int siz = 0;
-
-    err = clog_connect(url, port, &chost);
-    err = clog_send(&chost, send_buf, offset);
-    siz = clog_recv(chost, recv, recv_len);
-
-    recv[siz] = '\0';
-    recv_data.full = recv;
-    recv_data.body = strstr(recv, "\r\n\r\n") + 4;
-
-    return recv_data;
-}
-
-// TODO: Linux
-void passInput(char *buf) {
-    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE); 
-    DWORD mode = 0;
-    GetConsoleMode(hStdin, &mode);
-    SetConsoleMode(hStdin, mode & (~ENABLE_ECHO_INPUT));
-
-    scanf("%31s", buf);
-
-    SetConsoleMode(hStdin, mode & ( ENABLE_ECHO_INPUT));
-    printf("\n");
-}
-
-#define QR_FUL 219 
-#define QR_BOT 220
-#define QR_TOP 223
-
-#define BLE		"\x1b[38;2;105;120;237m"
-#define PUR		"\x1b[38;2;185;70;237m"
-#define GRE		"\x1b[38;2;105;160;125m"
-#define ORA		"\x1b[38;2;250;120;100m"
-#define YLL		"\x1b[38;2;200;60;120m"
-#define WHEB		"\e[47m"
-#define WHE		"\e[1;37m"
-#define GRY		"\x1b[38;2;50;50;50m"
-
 wchar_t subscript(char ascii) {
     const wchar_t table[] = { 
 	L'ᵃ', L'ᵇ', L'ᶜ', L'ᵈ', L'ᵉ', L'ᶠ', L'ᵍ',
@@ -515,7 +425,7 @@ void welcomeText(char *name) {
 	    curr[j] = (i == j) ? wname[j] : name[j];
 	}
 	curr[strlen(name)] = '\0';
-	wprintf(L"\rWelcome, %s%S%s", GRE, curr, RES);
+	wprintf(L"\rWelcome, %s%S%s", NGRN, curr, RES);
 
 	Sleep(80);
     }
@@ -525,93 +435,253 @@ void welcomeText(char *name) {
 }
 
 void auth();
-void checkAuthError(int stat) {
-    switch(stat) {
-	case OK: break;
+void checkAuthError(char *body, void (*restart)()) {
+    if(body[0] == '0')
+	return;
 
-	case INVALID_HEADER      : printf("%sERROR: %sInvalid header\n", RED, RES); exit(1);
-	case INVALID_TOKEN       : printf("%sERROR: %sInvalid token\n", RED, RES); break;
-	case USER_ALREADY_EXISTS : printf("%sERROR: %sUser already exists\n\n", RED, RES); auth(); break;
-	case SKIPPED_STEP        : printf("%sERROR: %sSkipped authentication step\n", RED, RES); exit(1);
-	case EXPIRED             : printf("%sERROR: %sTime has expired\n\n", RED, RES); auth(); break;
-	case TOO_MANY_ATTEMPTS   : printf("%sERROR: %sToo many failed attempts\n\n", RED, RES); exit(1);
+    printf("%sERROR: %s%s\n", RED, RES, body + 1);
 
-	default: break;
+    switch(body[0]) {
+	case '1': exit(1);
+	case '2': restart();
+	case '3': return;
+
+	default: exit(1);
     }
 }
 
-void auth() {
-    char user[32], mail[64];
-    int *stat = NULL;
+void applyArt(char *key, int indices[8][16], int posx, int posy) {
+    int key_len = strlen(key);
 
-    printf("Username (1/2) : ");
-    scanf("%31s", user);
-    printf("Email    (2/2) : ");
-    scanf("%31s", mail);
-    printf("\n");
+    for(int i = 0; i < key_len; i++) {
+	int8_t c = key[i];
 
-    /* STEP 1 - Get mail verification code */
-    clog_Header headers[] = {
-	CLOG_HEADER("Type", "auth_0"),
-	CLOG_HEADER("User", user),
-	CLOG_HEADER("Mail", mail),
-    };
+	for(int j = 0; j < 4; j+=2) {
+	    int8_t b0 = (c >> (j + 0)) & 0x01;
+	    int8_t b1 = (c >> (j + 1)) & 0x01;
+
+	    b0 = (b0 == 0) ? -1 : 1;
+	    b1 = (b1 == 0) ? -1 : 1;
+
+	    posx += b0;
+	    posy += b1;
+
+	    if(posx >= 8 || posx < 0)
+		continue;
+
+	    if(posy >= 16 || posy < 0)
+		continue;
+
+	    indices[posx][posy]++;
+	}
+    }
+}
+
+void displayProfile() {
+    const char chars[] = " .+*oO";
+    int indices[8][16];
+
+    for(int i = 0; i < 8; i++)
+	for(int j = 0; j < 16; j++)
+	    indices[i][j] = 0;
+
+    applyArt("cmFkaW9hY3R2cHJvZmlsZQ==", indices, 4, 8);
+    applyArt("vtc", indices, 4, 12);
+
+    printf("  +    [ Kilba ]    +\n");
+    for(int i = 0; i < 8; i++) {
+	for(int j = 0; j < 16; j++) {
+	    int index = indices[i][j];
+	    index = (index >= (sizeof(chars)-1)) ? (sizeof(chars)-1) : index;
+
+	    printf("%c", chars[index]);
+	}
+	printf("\n");
+    }
+    printf("  +                 +\n");
+}
+
+/* Will be NULL until "clog_InitGET" is called,
+ * then it will be allocated 2048 bytes. This will
+ * be freed upon calling "clog_FreeGET" */
+char *CLOG_INTERNAL_GET_BUF = NULL;
+
+void clog_GET(clog_HTTP *data) {
+    int err, siz;
+
+    Clog chost;
+    err = clog_connect(data->host, data->port, &chost);
+    err = clog_send(&chost, CLOG_INTERNAL_GET_BUF, data->offset);
+    siz = clog_recv( chost, CLOG_INTERNAL_GET_BUF, 2048);
+
+    CLOG_INTERNAL_GET_BUF[siz] = '\0';
+    data->body = strstr(CLOG_INTERNAL_GET_BUF, "\r\n\r\n") + 4;
+}
+
+clog_HTTP clog_InitGET(char *host, int port) {
+    clog_HTTP http;
+    http.host = host;
+    http.port = port;
+    http.offset = 0;
+
+    if(CLOG_INTERNAL_GET_BUF == NULL)
+	CLOG_INTERNAL_GET_BUF = malloc(2048);
+
+    http.offset += sprintf(CLOG_INTERNAL_GET_BUF, "%s %s\r\n", CLOG_BEG_HTTP_1_1, host);
+
+    return http;
+}
+
+void clog_AddHeader(clog_HTTP *data, char *key, char *value) {
+    data->offset += sprintf(
+	CLOG_INTERNAL_GET_BUF + data->offset,
+	"%s: %s\r\n",
+	key, value
+    );
+}
+
+void clog_AddCookieF(clog_HTTP *data, char *path) {
+    int err, len;
+    char *fdata = readFile(path, &len, &err);
+    fdata[strcspn(fdata, "\r\n")] = 0;
+    data->offset += sprintf(
+	CLOG_INTERNAL_GET_BUF + data->offset,
+	"Cookie: %s\r\n",
+	fdata
+    );
+    free(fdata);
+}
+
+void clog_AddBody(clog_HTTP *data, char *body) {
+    data->offset += sprintf(
+	CLOG_INTERNAL_GET_BUF + data->offset,
+	"\r\n%s",
+	body
+    );
+}
+
+void verifyEmail(char *user, char *mail, char *step_0, char *step_1, void (*reset)()) {
+    clog_HTTP data;
 
     printf("Sending email verification...\n");
-    
-    clog_httpData data;
-    data = clog_get(HOST, PORT, "", sizeof(headers) / sizeof(clog_Header), headers, 1024);
-    stat = (int *)data.body;
-    checkAuthError(*stat);
-    free(data.full);
+
+    data = clog_InitGET(HOST, PORT);
+    clog_AddHeader(&data, "Type", step_0);
+    clog_AddHeader(&data, "User", user);
+    clog_AddHeader(&data, "Mail", mail);
+    clog_AddBody(&data, "");
+    clog_GET(&data);
+    checkAuthError(data.body, reset);
 
     printf("Sent!\n\n");
 
-    /* STEP 2 - Confirm mail verification code */
-    int i;
-    for(i = 0; i < 3; i++) {
+    for(int i = 0; i < 3; i++) {
 	char emtok[9];
 	printf("Enter the token sent to your email: ");
-	scanf("%8s", emtok);
+	userInput(emtok, 9);
 
-	clog_Header headers2[] = {
-	    CLOG_HEADER("Type", "auth_1"),
-	    CLOG_HEADER("User", user),
-	    CLOG_HEADER("Toke", emtok),
-	};
+	data = clog_InitGET(HOST, PORT);
+	clog_AddHeader(&data, "Type", step_1);
+	clog_AddHeader(&data, "User", user);
+	clog_AddHeader(&data, "Toke", emtok);
+	clog_AddBody(&data, "");
+	clog_GET(&data);
+	checkAuthError(data.body, reset);
 
-	data = clog_get(HOST, PORT, "", sizeof(headers2) / sizeof(clog_Header), headers2, 1024);
-	int stat = *(int *)data.body;
-	checkAuthError(stat);
-	free(data.full);
-
-	if(stat == OK)
+	if(data.body[0] == '0')
 	    break;
     }
+}
 
-    /* STEP 3 - TOTP */
-    clog_Header headers3[] = {
-	CLOG_HEADER("Type", "auth_2"),
-	CLOG_HEADER("User", user),
-    };
+void verifyTotp(char *user, char *step, void (*callback)()) {
+    clog_HTTP data;
+    for(int i = 0; i < 3; i++) {
+	char totp[8];
+	printf("Enter the TOTP: ");
+	fflush (stdin);
+	fgets(totp, 8, stdin);
 
-    data = clog_get(HOST, PORT, "", sizeof(headers3) / sizeof(clog_Header), headers3, 1024);
-    stat = (int *)data.body;
-    checkAuthError(*stat);
+	data = clog_InitGET(HOST, PORT);
+	clog_AddHeader(&data, "Type", step);
+	clog_AddHeader(&data, "User", user);
+	clog_AddHeader(&data, "Totp", totp);
+	clog_AddBody(&data, "");
+	clog_GET(&data);
+	checkAuthError(data.body, callback);
 
-    data.body += sizeof(int);
-    free(data.full);
+	if(data.body[0] == '0')
+	    break;
+    }
+}
+
+void clog_saveCookies(char *path) {
+    char *cookie_data = strstr(CLOG_INTERNAL_GET_BUF, "Set-Cookie:");
+    if(cookie_data == NULL)
+	return;
+    cookie_data += sizeof("Set-Cookie:");
+    int cookie_len = strcspn(cookie_data, "\r\n");
+
+    char save[cookie_len + 1];
+    memcpy(save, cookie_data, cookie_len);
+    save[cookie_len] = '\0';
+
+    writeFile(path, save);
+}
+
+void autoLogin();
+void logoutAccount() {
+    writeFile("cookies", "");
+    printf("Logged out.\n");
+}
+
+void loginAccount() {
+    autoLogin();
+    if(bssh.logged_in) {
+	printf("Already logged in.\n");
+	exit(1);
+    }
+
+    char user[32];
+
+    /* Verify email */
+    printf("Username : ");
+    userInput(user, 32);
+
+    verifyEmail(user, "", "login_0", "login_1", loginAccount);
+
+    /* Verify Totp */
+    verifyTotp(user, "login_2", loginAccount);
+}
+
+void createAccount() {
+    clog_HTTP data;
+    char user[32], mail[64];
+
+    printf("Username (1/2) : ");
+    userInput(user, 32);
+    printf("Email    (2/2) : ");
+    userInput(mail, 32);
+    printf("\n");
+
+    verifyEmail(user, mail, "auth_0", "auth_1", createAccount);
+
+    data = clog_InitGET(HOST, PORT);
+    clog_AddHeader(&data, "Type", "auth_2");
+    clog_AddHeader(&data, "User", user);
+    clog_AddBody(&data, "");
+    clog_GET(&data);
+    checkAuthError(data.body, createAccount);
 
     uint8_t qr0[qrcodegen_BUFFER_LEN_MAX];
     uint8_t tempBuffer[qrcodegen_BUFFER_LEN_MAX];
-    char *qr_buf = data.body;
+    char *qr_buf = data.body + 1;
 
     bool ok = qrcodegen_encodeText(qr_buf,
 	tempBuffer, qr0, qrcodegen_Ecc_MEDIUM,
 	qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX,
 	qrcodegen_Mask_AUTO, true);
 
-    if (!ok) {
+    if(!ok) {
 	printf("%sERROR: %sQR Code could not be generated!\n", RED, RES);
 	exit(1);
     }
@@ -630,7 +700,7 @@ void auth() {
     printf("[ QR CODE ]");
     for(int i = 0; i < underscore_len; i++)
 	printf("_");
-    printf("\n%s  ", WHE);
+    printf("\n%s  ", NWHE);
 
     /* Print row of bottom halves */
     for(int i = 0; i < size+2; i++)
@@ -640,7 +710,7 @@ void auth() {
 
     /* Display QR Code */
     for (int y = 0; y < size; y+=2) {
-	printf("  %s%s ", WHEB, GRY);
+	printf("  %s%s ", NWHEB, NGRY);
 
 	for (int x = 0; x < size; x++) {
 	    bool top = qrcodegen_getModule(qr0, x, y + 0);
@@ -659,39 +729,53 @@ void auth() {
 	printf(" %s", RES);
 
 	switch(y) {
-	    case 2 : printf("    Username : %s%s%s", GRE, user, RES); break;
-	    case 4 : printf("    Mail     : %s%s%s", GRE, mail, RES); break;
+	    case 2 : printf("    Username : %s%s%s", NGRN, user, RES); break;
+	    case 4 : printf("    Mail     : %s%s%s", NGRN, mail, RES); break;
 	} 
 
 	printf("\n");
     }
+    printf("\n");
 
-    printf("\n  ");
+    verifyTotp(user, "auth_3", createAccount);
+    clog_saveCookies("cookies");
 
-    for(i = 0; i < 3; i++) {
-	char totp[8];
-	printf("Enter the TOTP: ");
-	fflush (stdin);
-	fgets(totp, 8, stdin);
+    welcomeText(user);
+    exit(1);
+}
 
-	clog_Header headers4[] = {
-	    CLOG_HEADER("Type", "auth_3"),
-	    CLOG_HEADER("User", user),
-	    CLOG_HEADER("Totp", totp),
-	};
+void autoLogin() {
+    if(bssh.logged_in)
+	return;
 
-	data = clog_get(HOST, PORT, "", sizeof(headers4) / sizeof(clog_Header), headers4, 1024);
-	int stat = *(int *)data.body;
-	checkAuthError(stat);
-	free(data.full);
+    clog_HTTP data = clog_InitGET(HOST, PORT);
+    clog_AddHeader( &data, "Type", "autoLogin");
+    clog_AddCookieF(&data, "cookies");
+    clog_AddBody(&data, "");
+    clog_GET(&data);
 
-	if(stat == OK)
-	    break;
+    checkAuthError(data.body, loginAccount);
+    
+    if(data.body[0] == '0')
+	bssh.logged_in = true;
+}
+
+void auth() {
+    char *type = cur_opt->args[0];
+    if(strcmp(type, "create") == 0) {
+	createAccount();
+	return;
     }
 
-    printf("\nAccount created");
-    welcomeText(user);
-    return;
+    if(strcmp(type, "login") == 0) {
+	loginAccount();
+	return;
+    }
+
+    if(strcmp(type, "logout") == 0) {
+	logoutAccount();
+	return;
+    }
 }
 
 void printProgress(int cur_object, int tot_objects, char *color) {

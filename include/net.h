@@ -33,6 +33,30 @@ typedef struct {
     int error;
 } Clog;
 
+typedef struct {
+    char *key, *value;
+} clog_Header;
+
+typedef struct {
+    char *data;
+    int num_cookies;
+} clog_Cookie;
+
+typedef struct {
+    char *body;
+    char *host;
+    int port;
+
+    int content_len;
+    int offset;
+
+    int num_headers;
+} clog_HTTP;
+
+#define CLOG_HEADER(key, value) (clog_Header){ key, value }
+#define CLOG_BEG_HTTP_1_1 "GET / HTTP/1.1\r\nHost: "
+#define CLOG_END_HTTP_1_1 "Connection: close\r\n\r\n"
+
 void clog_getStream(Clog *str);
 
 void clog_listener(int type, void (*callback)());

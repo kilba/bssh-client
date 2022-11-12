@@ -19,6 +19,15 @@
 #define WHT "\e[0;37m"
 #define RES "\e[0m"
 
+#define NBLU		"\x1b[38;2;105;120;237m"
+#define NPUR		"\x1b[38;2;185;70;237m"
+#define NGRN		"\x1b[38;2;105;160;125m"
+#define NORA		"\x1b[38;2;250;120;100m"
+#define NYEL		"\x1b[38;2;200;60;120m"
+#define NWHEB		"\e[47m"
+#define NWHE		"\e[1;37m"
+#define NGRY		"\x1b[38;2;50;50;50m"
+
 #define LINUX_SELF_PATH "/proc/self/exe/"
 
 #ifdef _WIN32
@@ -144,7 +153,7 @@ void writeFile(char *name, char *data) {
     errno = 0;
     FILE *fp = fopen(name, "w");
     if (fp != NULL) {
-        fputs(data, fp);
+	fprintf(fp, "%s", data);
         fclose(fp);
 	return;
     }

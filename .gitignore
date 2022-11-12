@@ -3,6 +3,8 @@ build/*
 !build/bssh_data.json
 !build/initfiles_win/*
 
+cookies
+
 # Prerequisites
 *.d
 
