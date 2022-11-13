@@ -161,6 +161,20 @@ void writeFile(char *name, char *data) {
     printf("%sWARNING: %sCouldn't write file \"%s\", errno %d\n", YEL, RES, name, errno);
 }
 
+bool dirExists(LPCTSTR szPath) {
+  DWORD dwAttrib = GetFileAttributes(szPath);
+
+  return (dwAttrib != INVALID_FILE_ATTRIBUTES && 
+         (dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
+}
+
+bool fileExists(LPCTSTR szPath) {
+  DWORD dwAttrib = GetFileAttributes(szPath);
+
+  return (dwAttrib != INVALID_FILE_ATTRIBUTES && 
+         !(dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
+}
+
 void createDir(char *name) {
 #ifdef _WIN32
     CreateDirectory(name, NULL);

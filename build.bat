@@ -1,3 +1,3 @@
 cd build/
-make -j16
+make -j8
 cd ../

@@ -7,8 +7,8 @@
 
 #include <net.h>
 #include <git2.h>
-#include <cJSON.h>
 #include <toml.h>
+#include <toml_write.h>
 #include <bsshstrs.h>
 #include <qrcodegen.h>
 
@@ -37,6 +37,9 @@ enum {
     OPT_INIT,
     OPT_UPDATE,
     OPT_AUTH,
+    OPT_PROFILE,
+    OPT_BEFRIEND,
+    OPT_UNFRIEND,
 
     OPT_COUNT
 };
@@ -65,8 +68,10 @@ Option *cur_opt = NULL;
 int flags = 0;
 int arg_offset = 0;
 
-char *exe_path = NULL;
-int exe_path_len = 0;
+char *cookie_path = NULL;
+char *app_data_path = NULL;
+char *bssh_path = NULL;
+size_t bssh_path_len = 0;
 char *bas_path = NULL;
 
 typedef struct {
@@ -79,16 +84,19 @@ typedef struct {
 Progress progress = {0};
 
 typedef struct {
-    cJSON *data;
-    cJSON *is_installed_json;
+    TomlTable *main, *engine;
 
     char *path;
+    bool installed;
     bool has_changed;
     bool logged_in;
 } BsshData;
 BsshData bssh = {0};
 
 void loadBsshData();
+void exitError() {
+    exit(1);
+}
 
 char *userInput(char *buf, int len) {
     buf = fgets(buf, 32, stdin);
@@ -107,7 +115,7 @@ void checkTomlErr(char *name) {
 }
 
 void dataWasEditedError() {
-    printf("%sERROR:%s bssh_data.json was edited and is now invalid!\n", RED, RES);
+    printf("%sERROR:%s bssh.toml was edited and is now invalid!\n", RED, RES);
     exit(1);
 }
 
@@ -157,13 +165,43 @@ void printHelp() {
 	  "USAGE\n"\
 	"    bssh <command> <subcommands> [flags]\n"\
 	"\nCOMMANDS\n"\
-	"    new <name>      Initialized a new project\n"\
+	"    new             Initialized a new project\n"\
 	"    update          Updates Basilisk to the latest release\n"\
+	"    auth	     Log in or out of accounts, create accounts\n"\
+	"    profile         Check out someones profile\n"\
 	"\nFLAGS\n"\
 	"    -h, --help      Prints this menu\n"\
 	"    -v, --version   Prints the current engine version\n";
 
     printf("%s", help_msg);
+}
+
+void printProfileUsage() {
+    char *msg = \
+	  "\nUSAGE\n"\
+	"    bssh profile <name> [flags]\n";
+
+    printf("%s\n", msg);
+}
+
+void printBefriendUsage() {
+    printf("Sends a friend request to a user\n");
+
+    char *msg = \
+	  "\nUSAGE\n"\
+	"    bssh befriend <name> [flags]\n";
+
+    printf("%s\n", msg);
+}
+
+void printUnfriendUsage() {
+    printf("Removes a friend from your friend list\n");
+
+    char *msg = \
+	  "\nUSAGE\n"\
+	"    bssh unfriend <name> [flags]\n";
+
+    printf("%s\n", msg);
 }
 
 void printVersion() {
@@ -254,6 +292,28 @@ void parse(char *arg) {
     parseOption(arg);
 }
 
+char *cookiePath() {
+    loadBsshData();
+    
+    if(cookie_path == NULL) {
+	cookie_path = malloc(bssh_path_len + sizeof("cookies"));
+	sprintf(cookie_path, "%s%s", bssh_path, "cookies");
+    }
+
+    return cookie_path;
+}
+
+char *cookiePathChkError() {
+    char *path = cookiePath();
+
+    if(!fileExists(path)) {
+	printf("%sERROR: %sYou need to be logged in to perform this action\n", RED, RES);
+	exit(1);
+    }
+
+    return path;
+}
+
 /* COMMANDS */
 void *initReplaceTable(TomlTable *table_main, int *num_elems_out) {
     *num_elems_out = 0;
@@ -322,13 +382,13 @@ void init() {
     loadBsshData();
 
     int name_len = strlen(name);
-    char path[exe_path_len + sizeof(INITFILES_PATH)];
+    char path[bssh_path_len + sizeof(INITFILES_PATH)];
 
-    sprintf(path, "%s%s", exe_path, INITFILES_PATH);
+    sprintf(path, "%s%s", bssh_path, INITFILES_PATH);
 
     /* Parse .TOML data */
-    char settings_path[exe_path_len + sizeof(INITFILES_PATH) + sizeof("/bssh.toml")];
-    sprintf(settings_path, "%s%s", exe_path, INITFILES_PATH "/bssh.toml");
+    char settings_path[bssh_path_len + sizeof(INITFILES_PATH) + sizeof("bssh.toml")];
+    sprintf(settings_path, "%s%s", bssh_path, INITFILES_PATH "bssh.toml");
 
     TomlTable *table_main;
 
@@ -352,8 +412,8 @@ void init() {
 
     for(int i = 0; i < num_elems; i++) {
 	int strlen_search = strlen(repl[i].search);
-	char repl_path[exe_path_len + sizeof(INITFILES_PATH) + strlen_search + 1];
-	sprintf(repl_path, "%s%s/%s", exe_path, INITFILES_PATH, repl[i].search);
+	char repl_path[bssh_path_len + sizeof(INITFILES_PATH) + strlen_search + 1];
+	sprintf(repl_path, "%s%s/%s", bssh_path, INITFILES_PATH, repl[i].search);
 
 	int err, len;
 	char *repl_contents = readFile(repl_path, &len, &err);
@@ -369,8 +429,8 @@ void init() {
 	    if(strcmp(repl_with, "PROJ_NAME") == 0) {
 		new_contents = replaceStrStr(new_contents, repl[i].match[j], name);
 	    } else if(strcmp(repl_with, "BASI_PATH") == 0) {
-		char basi_path[exe_path_len + sizeof("Basilisk")];
-		sprintf(basi_path, "%s%s", exe_path, "Basilisk");
+		char basi_path[bssh_path_len + sizeof("Basilisk")];
+		sprintf(basi_path, "%s%s", bssh_path, "Basilisk");
 		new_contents = replaceStrStr(new_contents, repl[i].match[j], basi_path);
 	    } else {
 		new_contents = replaceStrStr(new_contents, repl[i].match[j], repl_with);
@@ -630,7 +690,7 @@ void clog_saveCookies(char *path) {
 
 void autoLogin();
 void logoutAccount() {
-    writeFile("cookies", "");
+    writeFile(cookiePath(), "");
     printf("Logged out.\n");
 }
 
@@ -738,7 +798,7 @@ void createAccount() {
     printf("\n");
 
     verifyTotp(user, "auth_3", createAccount);
-    clog_saveCookies("cookies");
+    clog_saveCookies(cookiePath());
 
     welcomeText(user);
     exit(1);
@@ -750,7 +810,7 @@ void autoLogin() {
 
     clog_HTTP data = clog_InitGET(HOST, PORT);
     clog_AddHeader( &data, "Type", "autoLogin");
-    clog_AddCookieF(&data, "cookies");
+    clog_AddCookieF(&data, cookiePathChkError());
     clog_AddBody(&data, "");
     clog_GET(&data);
 
@@ -776,6 +836,28 @@ void auth() {
 	logoutAccount();
 	return;
     }
+}
+
+void profile() {
+    char *name = cur_opt->args[0];
+}
+
+void befriend() {
+    loadBsshData();
+
+    clog_HTTP data;
+    char *name = cur_opt->args[0];
+
+    data = clog_InitGET(HOST, PORT);
+    clog_AddHeader( &data, "Type" , "befriend");
+    clog_AddHeader( &data, "Friend", name);
+    clog_AddCookieF(&data, cookiePathChkError());
+    clog_AddBody(&data, "");
+    clog_GET(&data);
+    checkAuthError(data.body, exitError);
+}
+
+void unfriend() {
 }
 
 void printProgress(int cur_object, int tot_objects, char *color) {
@@ -813,54 +895,52 @@ int fetchProgress(const git_transfer_progress *stats, void *payload) {
 }
 
 void loadBsshData() {
-    if(bssh.data != NULL)
+    if(bssh.engine != NULL)
 	return;
 
     /* Get path to the executable folder */
 #ifdef _WIN32
-    exe_path = malloc(512);
-    GetModuleFileName(NULL, exe_path, 512);
-    char *p = strrchr(exe_path, '\\');
-    int index = p - exe_path;
-    exe_path[index+1] = '\0';
+    char *appdata = getenv("APPDATA");
+    int strlen_appdata = strlen(appdata);
+    bssh_path_len = strlen_appdata + sizeof("(/bssh/");
+    bssh_path = malloc(strlen_appdata + sizeof("/bssh/"));
+
+    sprintf(bssh_path, "%s/bssh/", appdata);
+    /* Replace '\' with '/' */
+    for(int i = 0; i < bssh_path_len; i++)
+	bssh_path[i] = (bssh_path[i] == '\\') ? '/' : bssh_path[i];
+
 #endif
 
 #if defined(unix) || defined(__unix__) || defined(__unix)
-    exe_path = malloc(sizeof(LINUX_SELF_PATH));
-    strcpy(exe_path, LINUX_SELF_PATH);
 #endif
 
-#define BSSH_NAME "bssh_data.json"
+#define BSSH_NAME "bssh.toml"
 #define BASI_NAME "Basilisk"
 
-    exe_path_len = strlen(exe_path);
-    /* Replace '\' with '/' */ /* TODO: Skip this step on UNIX */
-    for(int i = 0; i < exe_path_len; i++)
-	exe_path[i] = (exe_path[i] == '\\') ? '/' : exe_path[i];
+    bssh.path = malloc(bssh_path_len + sizeof(BSSH_NAME));
+    sprintf(bssh.path, "%s%s", bssh_path, BSSH_NAME);
 
+    bas_path = malloc(bssh_path_len + sizeof(BASI_NAME));
+    sprintf(bas_path, "%s%s", bssh_path, BASI_NAME);
 
-    bssh.path = malloc(exe_path_len + sizeof(BSSH_NAME));
-    sprintf(bssh.path, "%s%s", exe_path, BSSH_NAME);
+    bssh.main = toml_load_filename(bssh.path);
 
-    bas_path = malloc(exe_path_len + sizeof(BASI_NAME));
-    sprintf(bas_path, "%s%s", exe_path, BASI_NAME);
-
-    int err, len;
-    char *raw = readFile(bssh.path, &err, &len);
-    bssh.data = cJSON_Parse(raw);
-
-    if(bssh.data == NULL) {
+    if(bssh.main == NULL) {
 	printf("%sERROR:%s %s does not exist!", RED, RES, bssh.path);
 	exit(1);
     }
 
-    cJSON *engine = cJSON_GetObjectItem(bssh.data, "Engine");
+    TomlValue *engine = toml_table_get(bssh.main, "Basi");
     if(engine == NULL)
 	dataWasEditedError();
+    bssh.engine = engine->value.table;
 
-    bssh.is_installed_json = cJSON_GetObjectItem(engine, "isInstalled");
-    if(bssh.is_installed_json == NULL)
+    TomlValue *installed_toml = toml_table_get(bssh.engine, "installed");
+    if(installed_toml == NULL)
 	dataWasEditedError();
+
+    bssh.installed = installed_toml->value.boolean;
 }
 
 void clone(char *url) {
@@ -876,8 +956,10 @@ void clone(char *url) {
 	exit(1);
     }
 
+    TomlValue *val = toml_table_get(bssh.engine, "installed");
     bssh.has_changed = true;
-    cJSON_SetBoolValue(bssh.is_installed_json, true);
+    val->value.boolean = true;
+
     printProgress(progress.tot, progress.tot, GRN);
 }
 
@@ -929,7 +1011,7 @@ void update() {
     loadBsshData();
 
     /* Clone the repo if it's not installed, otherwise fetch newest  */
-    if(!bssh.is_installed_json->valueint) {
+    if(!bssh.installed) {
 	clone("https://github.com/nusbog/Basilisk");
     } else {
 	fetch("https://github.com/nusbog/Basilisk");
@@ -967,9 +1049,12 @@ int main(int argc, char **argv) {
     argv++;
     argc--;
 
-    opts[OPT_INIT]   = (Option){ "new"   , init  , printInitUsage  , OPT_INIT  , 0, 1, 1, { NULL }};
-    opts[OPT_UPDATE] = (Option){ "update", update, printUpdateUsage, OPT_UPDATE, 0, 0, 0, { NULL }};
-    opts[OPT_AUTH]   = (Option){ "auth"  , auth  , printAuthUsage  , OPT_AUTH  , 0, 1, 1, { NULL }};
+    opts[OPT_INIT]     = (Option){ "new"     , init    , printInitUsage     , OPT_INIT    , 0, 1, 1, { NULL }};
+    opts[OPT_UPDATE]   = (Option){ "update"  , update  , printUpdateUsage   , OPT_UPDATE  , 0, 0, 0, { NULL }};
+    opts[OPT_AUTH]     = (Option){ "auth"    , auth    , printAuthUsage     , OPT_AUTH    , 0, 1, 1, { NULL }};
+    opts[OPT_PROFILE]  = (Option){ "profile" , profile , printProfileUsage  , OPT_PROFILE , 0, 1, 1, { NULL }};
+    opts[OPT_BEFRIEND] = (Option){ "befriend", befriend, printBefriendUsage , OPT_PROFILE , 0, 1, 1, { NULL }};
+    opts[OPT_UNFRIEND] = (Option){ "unfriend", unfriend, printUnfriendUsage , OPT_PROFILE , 0, 1, 1, { NULL }};
 
     git_libgit2_init();
 
@@ -979,8 +1064,14 @@ int main(int argc, char **argv) {
 
     interpretOpts();
 
-    if(bssh.has_changed && bssh.data != NULL)
-	writeFile(bssh.path, cJSON_Print(bssh.data));
+    if(bssh.has_changed && bssh.main != NULL) {
+	char *buf = malloc(2048);
+	int buf_len = 0;
+
+	print_table(bssh.main, buf, &buf_len);
+	writeFile(bssh.path, buf);
+	free(buf);
+    }
 
     return 0;
 }
