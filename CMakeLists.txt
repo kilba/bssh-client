@@ -2,19 +2,13 @@ cmake_minimum_required(VERSION 3.23.2)
 
 project(bssh)
 
- if (DEFINED CMAKE_CXX_FLAGS_DEBUG_INIT AND  
-     "${CMAKE_CXX_FLAGS_DEBUG_INIT}" STREQUAL "${CMAKE_CXX_FLAGS_DEBUG}")
-     # Overwrite the init values choosen by CMake
-     if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-         set(CMAKE_CXX_FLAGS_DEBUG "-ggdb3 -O0" CACHE STRING "" FORCE)
-     endif()
- endif()
-
 add_executable(${PROJECT_NAME}
 	src/main.c
 	src/toml.c
 	src/toml_write.c
 	src/net.c
+	src/sha1.c
+	src/base64.c
 	src/qrcodegen.c
 )
 

@@ -34,12 +34,12 @@
     #include <windows.h>
     #include <fileapi.h>
 
-    #define INITFILES_PATH "initfiles_win"
+    #define INITFILES_PATH "initfiles_win/"
 
     #define CREAT_WRITE _S_IWRITE
 #endif
 #if defined(unix) || defined(__unix__) || defined(__unix)
-    #define INITFILES_PATH "initfiles_linux"
+    #define INITFILES_PATH "initfiles_linux/"
 
     #define CREAT_WRITE COPYMORE
 #endif

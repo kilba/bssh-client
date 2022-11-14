@@ -11,13 +11,14 @@
 #include <toml_write.h>
 #include <bsshstrs.h>
 #include <qrcodegen.h>
+#include <sha1.h>
+#include <base64.h>
 
 #ifdef _WIN32
     #include <winsock.h>
     #include <windows.h>
     #include <wchar.h>
     #include <locale.h>
-    #include <time.h>
 #endif
 
 #define HOST "192.168.10.189"
@@ -38,6 +39,7 @@ enum {
     OPT_UPDATE,
     OPT_AUTH,
     OPT_PROFILE,
+    OPT_TRY_PROFILE,
     OPT_BEFRIEND,
     OPT_UNFRIEND,
 
@@ -49,7 +51,6 @@ typedef struct {
     void (*func)();
     void (*usage)();
 
-    int idx;
     int num_sub_opts;
     int min_sub_opts;
     int max_sub_opts;
@@ -153,9 +154,9 @@ void printAuthUsage() {
 	  "\nUSAGE\n"\
 	"    bssh auth <command> [flags]\n"\
 	  "\nCOMMANDS\n"\
-	"    create:        Creates a new account\n"\
-	"    login :        Logs in to an account\n"\
-	"    logout:        Logs out of the account\n";
+	"    create         Creates a new account\n"\
+	"    login          Logs in to an account\n"\
+	"    logout         Logs out of the account\n";
 
     printf("%s", msg);
 }
@@ -167,7 +168,7 @@ void printHelp() {
 	"\nCOMMANDS\n"\
 	"    new             Initialized a new project\n"\
 	"    update          Updates Basilisk to the latest release\n"\
-	"    auth	     Log in or out of accounts, create accounts\n"\
+	"    auth            Log in or out of accounts, create accounts\n"\
 	"    profile         Check out someones profile\n"\
 	"\nFLAGS\n"\
 	"    -h, --help      Prints this menu\n"\
@@ -180,6 +181,14 @@ void printProfileUsage() {
     char *msg = \
 	  "\nUSAGE\n"\
 	"    bssh profile <name> [flags]\n";
+
+    printf("%s\n", msg);
+}
+
+void printTryProfileUsage() {
+    char *msg = \
+	  "\nUSAGE\n"\
+	"    bssh tryprofile <name> [flags]\n";
 
     printf("%s\n", msg);
 }
@@ -393,7 +402,7 @@ void init() {
     TomlTable *table_main;
 
     table_main = toml_load_filename(settings_path);
-    checkTomlErr("bssh.toml");
+    checkTomlErr(settings_path);
    
     int num_elems;
     struct ReplaceBuf {
@@ -510,57 +519,6 @@ void checkAuthError(char *body, void (*restart)()) {
     }
 }
 
-void applyArt(char *key, int indices[8][16], int posx, int posy) {
-    int key_len = strlen(key);
-
-    for(int i = 0; i < key_len; i++) {
-	int8_t c = key[i];
-
-	for(int j = 0; j < 4; j+=2) {
-	    int8_t b0 = (c >> (j + 0)) & 0x01;
-	    int8_t b1 = (c >> (j + 1)) & 0x01;
-
-	    b0 = (b0 == 0) ? -1 : 1;
-	    b1 = (b1 == 0) ? -1 : 1;
-
-	    posx += b0;
-	    posy += b1;
-
-	    if(posx >= 8 || posx < 0)
-		continue;
-
-	    if(posy >= 16 || posy < 0)
-		continue;
-
-	    indices[posx][posy]++;
-	}
-    }
-}
-
-void displayProfile() {
-    const char chars[] = " .+*oO";
-    int indices[8][16];
-
-    for(int i = 0; i < 8; i++)
-	for(int j = 0; j < 16; j++)
-	    indices[i][j] = 0;
-
-    applyArt("cmFkaW9hY3R2cHJvZmlsZQ==", indices, 4, 8);
-    applyArt("vtc", indices, 4, 12);
-
-    printf("  +    [ Kilba ]    +\n");
-    for(int i = 0; i < 8; i++) {
-	for(int j = 0; j < 16; j++) {
-	    int index = indices[i][j];
-	    index = (index >= (sizeof(chars)-1)) ? (sizeof(chars)-1) : index;
-
-	    printf("%c", chars[index]);
-	}
-	printf("\n");
-    }
-    printf("  +                 +\n");
-}
-
 /* Will be NULL until "clog_InitGET" is called,
  * then it will be allocated 2048 bytes. This will
  * be freed upon calling "clog_FreeGET" */
@@ -636,9 +594,9 @@ void verifyEmail(char *user, char *mail, char *step_0, char *step_1, void (*rese
     printf("Sent!\n\n");
 
     for(int i = 0; i < 3; i++) {
-	char emtok[9];
+	char emtok[64];
 	printf("Enter the token sent to your email: ");
-	userInput(emtok, 9);
+	userInput(emtok, 64);
 
 	data = clog_InitGET(HOST, PORT);
 	clog_AddHeader(&data, "Type", step_1);
@@ -691,7 +649,7 @@ void clog_saveCookies(char *path) {
 void autoLogin();
 void logoutAccount() {
     writeFile(cookiePath(), "");
-    printf("Logged out.\n");
+    printf("Logged out\n");
 }
 
 void loginAccount() {
@@ -838,8 +796,88 @@ void auth() {
     }
 }
 
+void applyArt(char *key, int key_len, int indices[8][16], int posx, int posy) {
+    for(int i = 0; i < key_len; i++) {
+	int8_t c = key[i];
+
+	for(int j = 0; j < 4; j+=2) {
+	    int8_t b0 = (c >> (j + 0)) & 0x01;
+	    int8_t b1 = (c >> (j + 1)) & 0x01;
+
+	    b0 = (b0 == 0) ? -1 : 1;
+	    b1 = (b1 == 0) ? -1 : 1;
+
+	    posx += b0;
+	    posy += b1;
+
+	    if(posx >= 8 || posx < 0)
+		continue;
+
+	    if(posy >= 16 || posy < 0)
+		continue;
+
+	    indices[posx][posy]++;
+	}
+    }
+}
+
+void displayProfile(char *name) {
+    const char chars[] = " .+*oO";
+    int indices[8][16];
+
+    for(int i = 0; i < 8; i++)
+	for(int j = 0; j < 16; j++)
+	    indices[i][j] = 0;
+    
+    char sha1[21];
+    int name_len = strlen(name);
+    SHA1(sha1, name, name_len);
+    sha1[20] = '\0';
+    size_t b64_len;
+    char *b64 = (char *)base64_encode((const unsigned char *)sha1, 20, &b64_len);
+
+    applyArt(b64, 20, indices, 4, 8);
+
+    int len = sizeof("              ");
+    len -= sizeof("[  ]");
+    len -= name_len;
+    len /= 2;
+    len += 1;
+
+    printf("  + ");
+    for(int i = 0; i < len; i++)
+	printf(" ");
+    printf("[ %s ]", name);
+    for(int i = 0; i < len; i++)
+	printf(" ");
+    printf(" +\n%s", NBLU);
+
+    for(int i = 0; i < 8; i++) {
+	printf("   ");
+	for(int j = 0; j < 16; j++) {
+	    int index = indices[i][j];
+	    index = (index >= (sizeof(chars)-1)) ? (sizeof(chars)-1) : index;
+
+	    if(index >= 3) {
+		printf("%s%c%s", CYN, chars[index], NBLU);
+		continue;
+	    }
+
+	    printf("%c", chars[index]);
+	}
+	printf("\n");
+    }
+    printf("  %s+                 +\n", RES);
+}
+
 void profile() {
     char *name = cur_opt->args[0];
+    displayProfile(name);
+}
+
+void tryProfile() {
+    char *name = cur_opt->args[0];
+    displayProfile(name);
 }
 
 void befriend() {
@@ -855,6 +893,11 @@ void befriend() {
     clog_AddBody(&data, "");
     clog_GET(&data);
     checkAuthError(data.body, exitError);
+
+    switch(data.body[1]) {
+	case '0': printf("%sFriend request sent%s\n", GRN, RES); break;
+	case '1': printf("You are now friends with \"%s\"\n", NPUR); break;
+    }
 }
 
 void unfriend() {
@@ -1049,12 +1092,13 @@ int main(int argc, char **argv) {
     argv++;
     argc--;
 
-    opts[OPT_INIT]     = (Option){ "new"     , init    , printInitUsage     , OPT_INIT    , 0, 1, 1, { NULL }};
-    opts[OPT_UPDATE]   = (Option){ "update"  , update  , printUpdateUsage   , OPT_UPDATE  , 0, 0, 0, { NULL }};
-    opts[OPT_AUTH]     = (Option){ "auth"    , auth    , printAuthUsage     , OPT_AUTH    , 0, 1, 1, { NULL }};
-    opts[OPT_PROFILE]  = (Option){ "profile" , profile , printProfileUsage  , OPT_PROFILE , 0, 1, 1, { NULL }};
-    opts[OPT_BEFRIEND] = (Option){ "befriend", befriend, printBefriendUsage , OPT_PROFILE , 0, 1, 1, { NULL }};
-    opts[OPT_UNFRIEND] = (Option){ "unfriend", unfriend, printUnfriendUsage , OPT_PROFILE , 0, 1, 1, { NULL }};
+    opts[OPT_INIT]         = (Option){ "new"       , init      , printInitUsage      , 0, 1, 1, { NULL }};
+    opts[OPT_UPDATE]       = (Option){ "update"    , update    , printUpdateUsage    , 0, 0, 0, { NULL }};
+    opts[OPT_AUTH]         = (Option){ "auth"      , auth      , printAuthUsage      , 0, 1, 1, { NULL }};
+    opts[OPT_PROFILE]      = (Option){ "profile"   , profile   , printProfileUsage   , 0, 1, 1, { NULL }};
+    opts[OPT_TRY_PROFILE]  = (Option){ "tryprofile", tryProfile, printTryProfileUsage, 0, 1, 1, { NULL }};
+    opts[OPT_BEFRIEND]     = (Option){ "befriend"  , befriend  , printBefriendUsage  , 0, 1, 1, { NULL }};
+    opts[OPT_UNFRIEND]     = (Option){ "unfriend"  , unfriend  , printUnfriendUsage  , 0, 1, 1, { NULL }};
 
     git_libgit2_init();
 
