@@ -1,6 +1,7 @@
 #ifndef BSSHSTRS_H
 #define BSSHSTRS_H
 
+#include <errhandlingapi.h>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -193,6 +194,21 @@ void createDir(char *name) {
     }
     mkdir(name, 0700);
 #endif
+}
+
+void copyFile(char *src, char *dest) {
+    int err = CopyFile(src, dest, true);
+    /* For some reason, Microsoft decided that errors return 0 in this function */
+    if(err == 0) {
+	err = GetLastError();
+	switch(err) {
+	    case ERROR_FILE_NOT_FOUND: printf("%sERROR: %sFile \"%s\" does not exist\n", RED, RES, src); break;
+	    case ERROR_FILE_EXISTS: printf("%sERROR: %sFile \"%s\" already exists\n", RED, RES, dest); break;
+	    default: printf("%sERROR: %sGetLastError returned %d\n", RED, RES, err);
+	}
+
+	exit(1);
+    }
 }
 
 void copyFiles(char *source, char *destination) {

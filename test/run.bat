@@ -1,3 +1,0 @@
-cd build
-test
-cd..

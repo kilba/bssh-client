@@ -21,8 +21,8 @@
     #include <locale.h>
 #endif
 
-#define HOST "192.168.10.189"
-#define PORT 8001
+#define HOST "161.35.71.150"
+#define PORT 8005
 
 #define QR_FUL 219 
 #define QR_BOT 220
@@ -32,6 +32,7 @@ enum Flags {
     FLAG_HELP = 1,
     FLAG_VERSION = 2,
     FLAG_LATEST = 4,
+    FLAG_GEOM = 8
 };
 
 enum {
@@ -42,6 +43,7 @@ enum {
     OPT_TRY_PROFILE,
     OPT_BEFRIEND,
     OPT_UNFRIEND,
+    OPT_SHADER,
 
     OPT_COUNT
 };
@@ -213,6 +215,19 @@ void printUnfriendUsage() {
     printf("%s\n", msg);
 }
 
+void printShaderUsage() {
+    printf("Initializes a new shader program\n");
+
+    char *msg = \
+	  "\nUSAGE\n"\
+	"    bssh shader <name> [flags]\n"\
+	  "\nFLAGS\n"\
+	"    -g, --geom      Also creates a geometry shader\n";
+
+    printf("%s\n", msg);
+    return;
+}
+
 void printVersion() {
     printf("v1.0\n");
 }
@@ -235,6 +250,11 @@ void stringFlag(char *arg, int arg_len) {
 	flags |= FLAG_VERSION;
 	return;
     }
+
+    if(argCmp(arg, "geom")) {
+	flags |= FLAG_GEOM;
+	return;
+    }
 }
 
 void charFlag(char arg) {
@@ -242,6 +262,7 @@ void charFlag(char arg) {
 	case 'h': flags |= FLAG_HELP; break;
 	case 'v': flags |= FLAG_VERSION; break;
 	case 'l': flags |= FLAG_LATEST; break;
+	case 'g': flags |= FLAG_GEOM; break;
     }
 }
 
@@ -454,6 +475,31 @@ void init() {
     }
 
     printf("Initialized a new project \"%s\"", name);
+}
+
+void shader() {
+    loadBsshData();
+
+    char *name = cur_opt->args[0];
+    char shader_path[bssh_path_len + sizeof("shaders/shader.__")];
+    char shader_dest[strlen(name) + sizeof(".__")];
+
+    int offset_path = sprintf(shader_path, "%s%s", bssh_path, "shaders/shader.");
+    int offset_dest = sprintf(shader_dest, "%s%c", name, '.');
+
+    strncpy(shader_path + offset_path, "vs", 3);
+    strncpy(shader_dest + offset_dest, "vs", 3);
+    copyFile(shader_path, shader_dest);
+
+    strncpy(shader_path + offset_path, "fs", 3);
+    strncpy(shader_dest + offset_dest, "fs", 3);
+    copyFile(shader_path, shader_dest);
+
+    if(hasFlag(FLAG_GEOM)) {
+	strncpy(shader_path + offset_path, "gs", 3);
+	strncpy(shader_dest + offset_dest, "gs", 3);
+	copyFile(shader_path, shader_dest);
+    }
 }
 
 wchar_t subscript(char ascii) {
@@ -1099,6 +1145,7 @@ int main(int argc, char **argv) {
     opts[OPT_TRY_PROFILE]  = (Option){ "tryprofile", tryProfile, printTryProfileUsage, 0, 1, 1, { NULL }};
     opts[OPT_BEFRIEND]     = (Option){ "befriend"  , befriend  , printBefriendUsage  , 0, 1, 1, { NULL }};
     opts[OPT_UNFRIEND]     = (Option){ "unfriend"  , unfriend  , printUnfriendUsage  , 0, 1, 1, { NULL }};
+    opts[OPT_SHADER]       = (Option){ "shader"    , shader    , printShaderUsage    , 0, 1, 1, { NULL }};
 
     git_libgit2_init();
 
