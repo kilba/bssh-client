@@ -21,8 +21,8 @@
     #include <locale.h>
 #endif
 
-#define HOST "161.35.71.150"
-#define PORT 8005
+#define HOST "192.168.10.189"
+#define PORT 8001
 
 #define QR_FUL 219 
 #define QR_BOT 220
@@ -550,7 +550,17 @@ void welcomeText(char *name) {
 }
 
 void auth();
-void checkAuthError(char *body, void (*restart)()) {
+void checkAuthError(char *body, void (*restart)(), int err) {
+    err = clog_error();
+    switch(err) {
+	case 0: break;
+	case WSAECONNRESET: printf("%sERROR: %sConnection Reset\n", RED, RES); exit(1);
+	case WSAETIMEDOUT: printf("%sERROR: %sTimed out\n", RED, RES); exit(1);
+	case WSAECONNREFUSED: printf("%sERROR: %sConnection refused, server might be offline\n", RED, RES); exit(1);
+
+	default: printf("%sERROR: %sWSA error code %d\n", RED, RES, err); exit(1);
+    }
+
     if(body[0] == '0')
 	return;
 
@@ -570,16 +580,26 @@ void checkAuthError(char *body, void (*restart)()) {
  * be freed upon calling "clog_FreeGET" */
 char *CLOG_INTERNAL_GET_BUF = NULL;
 
-void clog_GET(clog_HTTP *data) {
+int clog_GET(clog_HTTP *data) {
     int err, siz;
 
     Clog chost;
-    err = clog_connect(data->host, data->port, &chost);
+    err = clog_conn(data->host, data->port, &chost);
+    if(err == -1)
+	return err;
+
     err = clog_send(&chost, CLOG_INTERNAL_GET_BUF, data->offset);
+    if(err == -1)
+	return err;
+
     siz = clog_recv( chost, CLOG_INTERNAL_GET_BUF, 2048);
+    if(siz == -1)
+	return siz;
 
     CLOG_INTERNAL_GET_BUF[siz] = '\0';
     data->body = strstr(CLOG_INTERNAL_GET_BUF, "\r\n\r\n") + 4;
+
+    return 0;
 }
 
 clog_HTTP clog_InitGET(char *host, int port) {
@@ -634,8 +654,7 @@ void verifyEmail(char *user, char *mail, char *step_0, char *step_1, void (*rese
     clog_AddHeader(&data, "User", user);
     clog_AddHeader(&data, "Mail", mail);
     clog_AddBody(&data, "");
-    clog_GET(&data);
-    checkAuthError(data.body, reset);
+    checkAuthError(data.body, reset, clog_GET(&data));
 
     printf("Sent!\n\n");
 
@@ -649,8 +668,7 @@ void verifyEmail(char *user, char *mail, char *step_0, char *step_1, void (*rese
 	clog_AddHeader(&data, "User", user);
 	clog_AddHeader(&data, "Toke", emtok);
 	clog_AddBody(&data, "");
-	clog_GET(&data);
-	checkAuthError(data.body, reset);
+	checkAuthError(data.body, reset, clog_GET(&data));
 
 	if(data.body[0] == '0')
 	    break;
@@ -670,8 +688,7 @@ void verifyTotp(char *user, char *step, void (*callback)()) {
 	clog_AddHeader(&data, "User", user);
 	clog_AddHeader(&data, "Totp", totp);
 	clog_AddBody(&data, "");
-	clog_GET(&data);
-	checkAuthError(data.body, callback);
+	checkAuthError(data.body, callback, clog_GET(&data));
 
 	if(data.body[0] == '0')
 	    break;
@@ -699,12 +716,6 @@ void logoutAccount() {
 }
 
 void loginAccount() {
-    autoLogin();
-    if(bssh.logged_in) {
-	printf("Already logged in.\n");
-	exit(1);
-    }
-
     char user[32];
 
     /* Verify email */
@@ -733,8 +744,7 @@ void createAccount() {
     clog_AddHeader(&data, "Type", "auth_2");
     clog_AddHeader(&data, "User", user);
     clog_AddBody(&data, "");
-    clog_GET(&data);
-    checkAuthError(data.body, createAccount);
+    checkAuthError(data.body, createAccount, clog_GET(&data));
 
     uint8_t qr0[qrcodegen_BUFFER_LEN_MAX];
     uint8_t tempBuffer[qrcodegen_BUFFER_LEN_MAX];
@@ -816,9 +826,7 @@ void autoLogin() {
     clog_AddHeader( &data, "Type", "autoLogin");
     clog_AddCookieF(&data, cookiePathChkError());
     clog_AddBody(&data, "");
-    clog_GET(&data);
-
-    checkAuthError(data.body, loginAccount);
+    checkAuthError(data.body, loginAccount, clog_GET(&data));
     
     if(data.body[0] == '0')
 	bssh.logged_in = true;
@@ -867,14 +875,16 @@ void applyArt(char *key, int key_len, int indices[8][16], int posx, int posy) {
     }
 }
 
-void displayProfile(char *name) {
+void displayProfile(char *name, int num_pkgs) {
     const char chars[] = " .+*oO";
     int indices[8][16];
 
+    /* Zero initialize */
     for(int i = 0; i < 8; i++)
 	for(int j = 0; j < 16; j++)
 	    indices[i][j] = 0;
     
+    /* Generate SHA1 from name, then encode with Base64 */
     char sha1[21];
     int name_len = strlen(name);
     SHA1(sha1, name, name_len);
@@ -882,8 +892,10 @@ void displayProfile(char *name) {
     size_t b64_len;
     char *b64 = (char *)base64_encode((const unsigned char *)sha1, 20, &b64_len);
 
+    /* Fill indices[8][16] with art */
     applyArt(b64, 20, indices, 4, 8);
 
+    /* Print name bar at center: [ username ] */
     int len = sizeof("              ");
     len -= sizeof("[  ]");
     len -= name_len;
@@ -898,6 +910,7 @@ void displayProfile(char *name) {
 	printf(" ");
     printf(" +\n%s", NBLU);
 
+    /* Print the art with colors */
     for(int i = 0; i < 8; i++) {
 	printf("   ");
 	for(int j = 0; j < 16; j++) {
@@ -911,6 +924,7 @@ void displayProfile(char *name) {
 
 	    printf("%c", chars[index]);
 	}
+
 	printf("\n");
     }
     printf("  %s+                 +\n", RES);
@@ -918,12 +932,12 @@ void displayProfile(char *name) {
 
 void profile() {
     char *name = cur_opt->args[0];
-    displayProfile(name);
+    displayProfile(name, 0);
 }
 
 void tryProfile() {
     char *name = cur_opt->args[0];
-    displayProfile(name);
+    displayProfile(name, 0);
 }
 
 void befriend() {
@@ -937,12 +951,11 @@ void befriend() {
     clog_AddHeader( &data, "Friend", name);
     clog_AddCookieF(&data, cookiePathChkError());
     clog_AddBody(&data, "");
-    clog_GET(&data);
-    checkAuthError(data.body, exitError);
+    checkAuthError(data.body, exitError, clog_GET(&data));
 
     switch(data.body[1]) {
 	case '0': printf("%sFriend request sent%s\n", GRN, RES); break;
-	case '1': printf("You are now friends with \"%s\"\n", NPUR); break;
+	case '1': printf("You are now friends with %s\"%s\"%s\n", NPUR, name, RES); break;
     }
 }
 

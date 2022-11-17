@@ -7,6 +7,7 @@
 void clog_emptyCallback(Clog stream) { };
 
 clog_callback callbacks[CLOG_CALLBACK_COUNT];
+int error = 0;
 
 void clog_listener(int type, clog_callback callback) {
     if(callback == NULL)
@@ -15,10 +16,18 @@ void clog_listener(int type, clog_callback callback) {
     callbacks[type] = callback;
 }
 
+int clog_error() {
+    int last = error;
+    error = 0;
+    return last;
+}
+
 int clog_send(Clog *stream, char *data, int data_len) {
     int success = send(stream->sock_tcp, data, data_len, 0);
-    if(success < 0)
-        return WSAGetLastError();
+    if(success < 0) {
+	error = WSAGetLastError();
+	return -1;
+    }
 
     return success;
 }
@@ -27,29 +36,34 @@ int clog_recvUdp(Clog *stream, char *buf, int data_len) {
     struct sockaddr_in from;
     int size = sizeof(from);
     recvfrom(stream->sock_udp, buf, data_len, 0, (struct sockaddr *)&from, &size);
-    printf("fsdf\n");
 
     return 0;
 }
 
 int clog_recv(Clog str, char *msg, int size) {
     int num_bytes = recv(str.sock_tcp, msg, size, 0);
-    if(num_bytes == SOCKET_ERROR)
-        return SOCKET_ERROR;
+    if(num_bytes == SOCKET_ERROR) {
+	error = WSAGetLastError();
+        return -1;
+    }
 
     return num_bytes;
 }
 
-int clog_connect(char* host, int port, Clog *out) {
+int clog_conn(char* host, int port, Clog *out) {
     WSADATA wsa;
     Clog this;
 
     // Socket Init
-    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
-        return WSAGetLastError();
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+	error = WSAGetLastError();
+	return -1;
+    }
 
-    if((this.sock_tcp = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET)
-        return WSAGetLastError();
+    if((this.sock_tcp = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET) {
+	error = WSAGetLastError();
+	return -1;
+    }
 
     // Socket Init
     struct sockaddr_in server;
@@ -58,8 +72,10 @@ int clog_connect(char* host, int port, Clog *out) {
     server.sin_port        = htons(port);
 
     // Connect
-    if (connect(this.sock_tcp, (struct sockaddr*)&server , sizeof(server)) < 0)
-        return WSAGetLastError();
+    if (connect(this.sock_tcp, (struct sockaddr*)&server , sizeof(server)) < 0) {
+	error = WSAGetLastError();
+        return -1;
+    }
 
     *out = this;
     return 0;

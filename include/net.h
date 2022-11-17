@@ -58,10 +58,10 @@ typedef struct {
 #define CLOG_END_HTTP_1_1 "Connection: close\r\n\r\n"
 
 void clog_getStream(Clog *str);
-
+int clog_error();
 void clog_listener(int type, void (*callback)());
 int clog_send(Clog *stream, char *data, int data_len);
-int clog_connect(char *host, int port, Clog *out);
+int clog_conn(char *host, int port, Clog *out);
 int clog_listen(char *host, int port, int type, Clog *out);
 int clog_recv(Clog str, char *msg, int size);
 void clog_closeStream(Clog *stream);
