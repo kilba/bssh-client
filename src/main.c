@@ -28,11 +28,15 @@
 #define QR_BOT 220
 #define QR_TOP 223
 
-enum Flags {
-    FLAG_HELP = 1,
-    FLAG_VERSION = 2,
-    FLAG_LATEST = 4,
-    FLAG_GEOM = 8
+enum {
+    FLAG_HELP,
+    FLAG_VERSION,
+    FLAG_LATEST,
+    FLAG_GEOM,
+    FLAG_FRIENDS,
+    FLAG_UPDATE,
+
+    FLAG_COUNT
 };
 
 enum {
@@ -44,9 +48,17 @@ enum {
     OPT_BEFRIEND,
     OPT_UNFRIEND,
     OPT_SHADER,
+    OPT_STATUS,
 
     OPT_COUNT
 };
+
+typedef struct {
+    char *skey;
+    char  ckey;
+    bool is_set;
+} Flag;
+Flag flags[FLAG_COUNT];
 
 typedef struct {
     char *key;
@@ -68,7 +80,6 @@ Option *cur_opt = NULL;
 #define USER 1
 #define PASS 2
 
-int flags = 0;
 int arg_offset = 0;
 
 char *cookie_path = NULL;
@@ -127,7 +138,7 @@ bool argCmp(char *first, char *second) {
 }
 
 bool hasFlag(int flag) {
-    return (flags & flag) == flag;
+    return flags[flag].is_set;
 }
 
 void printInitUsage() {
@@ -225,7 +236,19 @@ void printShaderUsage() {
 	"    -g, --geom      Also creates a geometry shader\n";
 
     printf("%s\n", msg);
-    return;
+}
+
+void printStatusUsage() {
+    printf("Gets any local or remote status updates, all status\nupdates will be requested if no flags are specified\n");
+    
+    char *msg = \
+	  "\nUSAGE\n"\
+	"    bssh status [flags]\n"\
+	  "\nFLAGS\n"\
+	"    -f, --friends    Gets friend requests"\
+	"    -u, --updates    Checks if updates are available";
+
+    printf("%s\n", msg);
 }
 
 void printVersion() {
@@ -236,33 +259,20 @@ void stringFlag(char *arg, int arg_len) {
     arg++;
     arg_len--;
 
-    if(argCmp(arg, "help")) {
-	flags |= FLAG_HELP;
-	return;
-    }
-
-    if(argCmp(arg, "version")) {
-	flags |= FLAG_VERSION;
-	return;
-    }
-
-    if(argCmp(arg, "latest")) {
-	flags |= FLAG_VERSION;
-	return;
-    }
-
-    if(argCmp(arg, "geom")) {
-	flags |= FLAG_GEOM;
-	return;
+    for(int i = 0; i < FLAG_COUNT; i++) {
+	if(argCmp(arg, flags[i].skey)) {
+	    flags[i].is_set = true;
+	    return;
+	}
     }
 }
 
 void charFlag(char arg) {
-    switch(arg) {
-	case 'h': flags |= FLAG_HELP; break;
-	case 'v': flags |= FLAG_VERSION; break;
-	case 'l': flags |= FLAG_LATEST; break;
-	case 'g': flags |= FLAG_GEOM; break;
+    for(int i = 0; i < FLAG_COUNT; i++) {
+	if(arg == flags[i].ckey) {
+	    flags[i].is_set = true;
+	    return;
+	}
     }
 }
 
@@ -524,6 +534,7 @@ wchar_t subscript(char ascii) {
     return ' ';
 }
 
+/* TODO: This doesn't work on all terminals */
 void welcomeText(char *name) {
     int strlen_name = strlen(name) + 1;
 
@@ -726,6 +737,9 @@ void loginAccount() {
 
     /* Verify Totp */
     verifyTotp(user, "login_2", loginAccount);
+
+    printf("Saving cookies to \"%s\"\n", cookiePath());
+    clog_saveCookies(cookiePath());
 }
 
 void createAccount() {
@@ -814,7 +828,8 @@ void createAccount() {
     verifyTotp(user, "auth_3", createAccount);
     clog_saveCookies(cookiePath());
 
-    welcomeText(user);
+    printf("Welcome, %s%s%s", NGRN, user, RES);
+//    welcomeText(user);
     exit(1);
 }
 
@@ -960,6 +975,10 @@ void befriend() {
 }
 
 void unfriend() {
+}
+
+void chkStatus() {
+
 }
 
 void printProgress(int cur_object, int tot_objects, char *color) {
@@ -1151,6 +1170,12 @@ int main(int argc, char **argv) {
     argv++;
     argc--;
 
+    flags[FLAG_HELP]       = (Flag){ "help"    , 'h', 0 };
+    flags[FLAG_VERSION]    = (Flag){ "version" , 'v', 0 };
+    flags[FLAG_GEOM]       = (Flag){ "geom"    , 'g', 0 };
+    flags[FLAG_FRIENDS]    = (Flag){ "friends" , 'f', 0 };
+    flags[FLAG_UPDATE]     = (Flag){ "update"  , 'u', 0 };
+
     opts[OPT_INIT]         = (Option){ "new"       , init      , printInitUsage      , 0, 1, 1, { NULL }};
     opts[OPT_UPDATE]       = (Option){ "update"    , update    , printUpdateUsage    , 0, 0, 0, { NULL }};
     opts[OPT_AUTH]         = (Option){ "auth"      , auth      , printAuthUsage      , 0, 1, 1, { NULL }};
@@ -1159,6 +1184,7 @@ int main(int argc, char **argv) {
     opts[OPT_BEFRIEND]     = (Option){ "befriend"  , befriend  , printBefriendUsage  , 0, 1, 1, { NULL }};
     opts[OPT_UNFRIEND]     = (Option){ "unfriend"  , unfriend  , printUnfriendUsage  , 0, 1, 1, { NULL }};
     opts[OPT_SHADER]       = (Option){ "shader"    , shader    , printShaderUsage    , 0, 1, 1, { NULL }};
+    opts[OPT_STATUS]       = (Option){ "status"    , chkStatus , printStatusUsage    , 0, 0, 0, { NULL }};
 
     git_libgit2_init();
 
