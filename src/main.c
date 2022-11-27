@@ -29,12 +29,16 @@
 #define QR_TOP 223
 
 enum {
+    STATUS_ALL = 0,
+    STATUS_FRIENDS = 1,
+    STATUS_UPDATE = 2
+};
+
+enum {
     FLAG_HELP,
     FLAG_VERSION,
     FLAG_LATEST,
     FLAG_GEOM,
-    FLAG_FRIENDS,
-    FLAG_UPDATE,
 
     FLAG_COUNT
 };
@@ -44,7 +48,6 @@ enum {
     OPT_UPDATE,
     OPT_AUTH,
     OPT_PROFILE,
-    OPT_TRY_PROFILE,
     OPT_BEFRIEND,
     OPT_UNFRIEND,
     OPT_SHADER,
@@ -194,14 +197,6 @@ void printProfileUsage() {
     char *msg = \
 	  "\nUSAGE\n"\
 	"    bssh profile <name> [flags]\n";
-
-    printf("%s\n", msg);
-}
-
-void printTryProfileUsage() {
-    char *msg = \
-	  "\nUSAGE\n"\
-	"    bssh tryprofile <name> [flags]\n";
 
     printf("%s\n", msg);
 }
@@ -950,11 +945,6 @@ void profile() {
     displayProfile(name, 0);
 }
 
-void tryProfile() {
-    char *name = cur_opt->args[0];
-    displayProfile(name, 0);
-}
-
 void befriend() {
     loadBsshData();
 
@@ -978,7 +968,15 @@ void unfriend() {
 }
 
 void chkStatus() {
+    clog_HTTP data;
+    data = clog_InitGET(HOST, PORT);
+    clog_AddHeader(&data, "Type", "status");
+    clog_AddCookieF(&data, cookiePathChkError());
+    clog_AddBody(&data, "");
+    checkAuthError(data.body, exitError, clog_GET(&data));
 
+    printf("%s%s\n", NGRN, data.body + 1);
+    printf("%s", RES);
 }
 
 void printProgress(int cur_object, int tot_objects, char *color) {
@@ -1173,14 +1171,11 @@ int main(int argc, char **argv) {
     flags[FLAG_HELP]       = (Flag){ "help"    , 'h', 0 };
     flags[FLAG_VERSION]    = (Flag){ "version" , 'v', 0 };
     flags[FLAG_GEOM]       = (Flag){ "geom"    , 'g', 0 };
-    flags[FLAG_FRIENDS]    = (Flag){ "friends" , 'f', 0 };
-    flags[FLAG_UPDATE]     = (Flag){ "update"  , 'u', 0 };
 
     opts[OPT_INIT]         = (Option){ "new"       , init      , printInitUsage      , 0, 1, 1, { NULL }};
     opts[OPT_UPDATE]       = (Option){ "update"    , update    , printUpdateUsage    , 0, 0, 0, { NULL }};
     opts[OPT_AUTH]         = (Option){ "auth"      , auth      , printAuthUsage      , 0, 1, 1, { NULL }};
     opts[OPT_PROFILE]      = (Option){ "profile"   , profile   , printProfileUsage   , 0, 1, 1, { NULL }};
-    opts[OPT_TRY_PROFILE]  = (Option){ "tryprofile", tryProfile, printTryProfileUsage, 0, 1, 1, { NULL }};
     opts[OPT_BEFRIEND]     = (Option){ "befriend"  , befriend  , printBefriendUsage  , 0, 1, 1, { NULL }};
     opts[OPT_UNFRIEND]     = (Option){ "unfriend"  , unfriend  , printUnfriendUsage  , 0, 1, 1, { NULL }};
     opts[OPT_SHADER]       = (Option){ "shader"    , shader    , printShaderUsage    , 0, 1, 1, { NULL }};
