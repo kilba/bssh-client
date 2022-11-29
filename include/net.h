@@ -57,6 +57,13 @@ typedef struct {
 #define CLOG_BEG_HTTP_1_1 "GET / HTTP/1.1\r\nHost: "
 #define CLOG_END_HTTP_1_1 "Connection: close\r\n\r\n"
 
+int clog_GET(clog_HTTP *data);
+clog_HTTP clog_InitGET(char *host, int port);
+void clog_AddHeader(clog_HTTP *data, char *key, char *value);
+void clog_AddCookieF(clog_HTTP *data, char *path);
+void clog_saveCookies(char *path);
+void clog_AddBody(clog_HTTP *data, char *body);
+
 void clog_getStream(Clog *str);
 int clog_error();
 void clog_listener(int type, void (*callback)());

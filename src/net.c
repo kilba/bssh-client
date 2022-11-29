@@ -9,6 +9,135 @@ void clog_emptyCallback(Clog stream) { };
 clog_callback callbacks[CLOG_CALLBACK_COUNT];
 int error = 0;
 
+
+/* Will be NULL until "clog_InitGET" is called,
+ * then it will be allocated 2048 bytes. This will
+ * be freed upon calling "clog_FreeGET" */
+char *CLOG_INTERNAL_GET_BUF = NULL;
+
+char* clog_readFile(char *path, int *content_len, int *errcode) {
+    if(path == 0) {
+        *errcode = 1;
+        return NULL;
+    }
+
+    char *buffer = 0;
+    long length;
+    FILE * f = fopen (path, "rb");
+
+    if (f)
+    {
+      fseek (f, 0, SEEK_END);
+      length = ftell (f) + 1;
+      fseek (f, 0, SEEK_SET);
+      buffer = malloc (length);
+      if (buffer)
+      {
+        fread (buffer, 1, length, f);
+      }
+      fclose (f);
+    } else {
+        *errcode = 2;
+        return NULL;
+    }
+
+    *errcode = 0;
+    *content_len = length;
+    buffer[length - 1] = '\0';
+    return buffer;
+}
+
+void clog_writeFile(char *name, char *data) {
+    FILE *fp = fopen(name, "w");
+    if (fp != NULL) {
+	fprintf(fp, "%s", data);
+        fclose(fp);
+	return;
+    }
+}
+
+int clog_GET(clog_HTTP *data) {
+    int err, siz;
+
+    Clog chost;
+    err = clog_conn(data->host, data->port, &chost);
+    if(err == -1)
+	return err;
+
+    err = clog_send(&chost, CLOG_INTERNAL_GET_BUF, data->offset);
+    if(err == -1)
+	return err;
+
+    siz = clog_recv( chost, CLOG_INTERNAL_GET_BUF, 2048);
+    if(siz == -1)
+	return siz;
+
+    CLOG_INTERNAL_GET_BUF[siz] = '\0';
+    data->body = strstr(CLOG_INTERNAL_GET_BUF, "\r\n\r\n") + 4;
+    int total_size = data->body - CLOG_INTERNAL_GET_BUF;
+    data->content_len = siz - total_size;
+
+    return 0;
+}
+
+clog_HTTP clog_InitGET(char *host, int port) {
+    clog_HTTP http;
+    http.host = host;
+    http.port = port;
+    http.offset = 0;
+
+    if(CLOG_INTERNAL_GET_BUF == NULL)
+	CLOG_INTERNAL_GET_BUF = malloc(2048);
+
+    http.offset += sprintf(CLOG_INTERNAL_GET_BUF, "%s %s\r\n", CLOG_BEG_HTTP_1_1, host);
+
+    return http;
+}
+
+void clog_AddHeader(clog_HTTP *data, char *key, char *value) {
+    data->offset += sprintf(
+	CLOG_INTERNAL_GET_BUF + data->offset,
+	"%s: %s\r\n",
+	key, value
+    );
+}
+
+void clog_AddCookieF(clog_HTTP *data, char *path) {
+    int err, len;
+    char *fdata = clog_readFile(path, &len, &err);
+    fdata[strcspn(fdata, "\r\n")] = 0;
+    data->offset += sprintf(
+	CLOG_INTERNAL_GET_BUF + data->offset,
+	"Cookie: %s\r\n",
+	fdata
+    );
+    free(fdata);
+}
+
+void clog_saveCookies(char *path) {
+    char *cookie_data = strstr(CLOG_INTERNAL_GET_BUF, "Set-Cookie:");
+    if(cookie_data == NULL)
+	return;
+    cookie_data += sizeof("Set-Cookie:");
+    int cookie_len = strcspn(cookie_data, "\r\n");
+
+    char save[cookie_len + 1];
+    memcpy(save, cookie_data, cookie_len);
+    save[cookie_len] = '\0';
+
+    clog_writeFile(path, save);
+}
+
+void clog_AddBody(clog_HTTP *data, char *body) {
+    data->offset += sprintf(
+	CLOG_INTERNAL_GET_BUF + data->offset,
+	"\r\n%s",
+	body
+    );
+}
+
+
+
 void clog_listener(int type, clog_callback callback) {
     if(callback == NULL)
         return;

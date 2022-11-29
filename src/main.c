@@ -581,75 +581,6 @@ void checkAuthError(char *body, void (*restart)(), int err) {
     }
 }
 
-/* Will be NULL until "clog_InitGET" is called,
- * then it will be allocated 2048 bytes. This will
- * be freed upon calling "clog_FreeGET" */
-char *CLOG_INTERNAL_GET_BUF = NULL;
-
-int clog_GET(clog_HTTP *data) {
-    int err, siz;
-
-    Clog chost;
-    err = clog_conn(data->host, data->port, &chost);
-    if(err == -1)
-	return err;
-
-    err = clog_send(&chost, CLOG_INTERNAL_GET_BUF, data->offset);
-    if(err == -1)
-	return err;
-
-    siz = clog_recv( chost, CLOG_INTERNAL_GET_BUF, 2048);
-    if(siz == -1)
-	return siz;
-
-    CLOG_INTERNAL_GET_BUF[siz] = '\0';
-    data->body = strstr(CLOG_INTERNAL_GET_BUF, "\r\n\r\n") + 4;
-
-    return 0;
-}
-
-clog_HTTP clog_InitGET(char *host, int port) {
-    clog_HTTP http;
-    http.host = host;
-    http.port = port;
-    http.offset = 0;
-
-    if(CLOG_INTERNAL_GET_BUF == NULL)
-	CLOG_INTERNAL_GET_BUF = malloc(2048);
-
-    http.offset += sprintf(CLOG_INTERNAL_GET_BUF, "%s %s\r\n", CLOG_BEG_HTTP_1_1, host);
-
-    return http;
-}
-
-void clog_AddHeader(clog_HTTP *data, char *key, char *value) {
-    data->offset += sprintf(
-	CLOG_INTERNAL_GET_BUF + data->offset,
-	"%s: %s\r\n",
-	key, value
-    );
-}
-
-void clog_AddCookieF(clog_HTTP *data, char *path) {
-    int err, len;
-    char *fdata = readFile(path, &len, &err);
-    fdata[strcspn(fdata, "\r\n")] = 0;
-    data->offset += sprintf(
-	CLOG_INTERNAL_GET_BUF + data->offset,
-	"Cookie: %s\r\n",
-	fdata
-    );
-    free(fdata);
-}
-
-void clog_AddBody(clog_HTTP *data, char *body) {
-    data->offset += sprintf(
-	CLOG_INTERNAL_GET_BUF + data->offset,
-	"\r\n%s",
-	body
-    );
-}
-
 void verifyEmail(char *user, char *mail, char *step_0, char *step_1, void (*reset)()) {
     clog_HTTP data;
 
@@ -677,7 +608,7 @@ void verifyEmail(char *user, char *mail, char *step_0, char *step_1, void (*rese
 	checkAuthError(data.body, reset, clog_GET(&data));
 
 	if(data.body[0] == '0')
-	    break;
+	    return;
     }
 }
 
@@ -699,20 +630,6 @@ void verifyTotp(char *user, char *step, void (*callback)()) {
 	if(data.body[0] == '0')
 	    break;
     }
-}
-
-void clog_saveCookies(char *path) {
-    char *cookie_data = strstr(CLOG_INTERNAL_GET_BUF, "Set-Cookie:");
-    if(cookie_data == NULL)
-	return;
-    cookie_data += sizeof("Set-Cookie:");
-    int cookie_len = strcspn(cookie_data, "\r\n");
-
-    char save[cookie_len + 1];
-    memcpy(save, cookie_data, cookie_len);
-    save[cookie_len] = '\0';
-
-    writeFile(path, save);
 }
 
 void autoLogin();
@@ -974,6 +891,11 @@ void chkStatus() {
     clog_AddCookieF(&data, cookiePathChkError());
     clog_AddBody(&data, "");
     checkAuthError(data.body, exitError, clog_GET(&data));
+
+    if(data.content_len == 1) {
+	printf("Nothing new\n");
+	return;
+    }
 
     printf("%s%s\n", NGRN, data.body + 1);
     printf("%s", RES);
