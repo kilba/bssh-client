@@ -85,11 +85,11 @@ Option *cur_opt = NULL;
 
 int arg_offset = 0;
 
-char *cookie_path = NULL;
 char *app_data_path = NULL;
+char *cookie_path = NULL;
 char *bssh_path = NULL;
-size_t bssh_path_len = 0;
 char *bas_path = NULL;
+size_t bssh_path_len = 0;
 
 typedef struct {
     int tot;
@@ -271,7 +271,7 @@ void charFlag(char arg) {
     }
 }
 
-void flag(char *arg, int arg_len) {
+void parseFlag(char *arg, int arg_len) {
     arg++;
     arg_len--;
 
@@ -319,7 +319,7 @@ void parse(char *arg) {
     
     /* If current arg is a flag */
     if(arg[0] == '-') {
-	flag(arg, arg_len);
+	parseFlag(arg, arg_len);
 	return;
     }
 
@@ -421,7 +421,7 @@ void init() {
 
     sprintf(path, "%s%s", bssh_path, INITFILES_PATH);
 
-    /* Parse .TOML data */
+    // Parse .TOML data
     char settings_path[bssh_path_len + sizeof(INITFILES_PATH) + sizeof("bssh.toml")];
     sprintf(settings_path, "%s%s", bssh_path, INITFILES_PATH "bssh.toml");
 
@@ -443,7 +443,12 @@ void init() {
     for(int i = 0; i < num_elems; i++)
 	skip[i+3] = repl[i].search;
 
+    char proj_bas_path[name_len + sizeof("/Basilisk")];
+    sprintf(proj_bas_path, "%s/Basilisk", name);
+
+    // Copy initfiles to new project
     copyDirSkip(path, name, 3 + num_elems, skip);
+    copyDir(bas_path, proj_bas_path);
 
     for(int i = 0; i < num_elems; i++) {
 	int strlen_search = strlen(repl[i].search);
@@ -453,6 +458,7 @@ void init() {
 	int err, len;
 	char *repl_contents = readFile(repl_path, &len, &err);
 	char *new_contents = repl_contents;
+
 	if(err != 0) {
 	    printf("%sWARNING: %sThe file \"%s\" as specified in \"bssh.toml\" was not found\n",
 	    YEL, RES, repl[i].search);
@@ -471,6 +477,7 @@ void init() {
 		new_contents = replaceStrStr(new_contents, repl[i].match[j], repl_with);
 	    }
 	}
+
 	char new_path[name_len + strlen_search + 2];
 	sprintf(new_path, "%s/%s", name, repl[i].search);
 	writeFile(new_path, new_contents);
@@ -655,6 +662,8 @@ void loginAccount() {
 }
 
 void createAccount() {
+    loadBsshData();
+    
     clog_HTTP data;
     char user[32], mail[64];
 
@@ -693,6 +702,7 @@ void createAccount() {
     underscore_len  = (float)size / 2.0 + 1.0;
     underscore_len -= sizeof("[ QR Code ]") / 2.0;
     underscore_len  = ceil(underscore_len);
+
 
     printf("\n  ");
     for(int i = 0; i < underscore_len; i++)
@@ -803,7 +813,7 @@ void applyArt(char *key, int key_len, int indices[8][16], int posx, int posy) {
 }
 
 void displayProfile(char *name, int num_pkgs) {
-    const char chars[] = " .+*oO";
+    const char chars[] = " .+*~o";
     int indices[8][16];
 
     /* Zero initialize */
@@ -842,7 +852,7 @@ void displayProfile(char *name, int num_pkgs) {
 	printf("   ");
 	for(int j = 0; j < 16; j++) {
 	    int index = indices[i][j];
-	    index = (index >= (sizeof(chars)-1)) ? (sizeof(chars)-1) : index;
+	    index = (index >= 7) ? 6 : index;
 
 	    if(index >= 3) {
 		printf("%s%c%s", CYN, chars[index], NBLU);
@@ -852,12 +862,23 @@ void displayProfile(char *name, int num_pkgs) {
 	    printf("%c", chars[index]);
 	}
 
+	switch(i) {
+	    case 1: printf("  / Packages : %s%d%s", RES, 0, NBLU); break;
+	    case 2: printf("  \\ Verified : %sTRUE%s", RES, NBLU); break;
+	}
+
 	printf("\n");
     }
-    printf("  %s+                 +\n", RES);
+
+    printf("  %s+                  +\n", RES);
 }
 
 void profile() {
+    if(cur_opt->num_sub_opts == 0) {
+	
+	return;
+    }
+
     char *name = cur_opt->args[0];
     displayProfile(name, 0);
 }
@@ -1053,9 +1074,9 @@ void update() {
 
     /* Clone the repo if it's not installed, otherwise fetch newest  */
     if(!bssh.installed) {
-	clone("https://github.com/nusbog/Basilisk");
+	clone("https://github.com/kilbaa/Basilisk");
     } else {
-	fetch("https://github.com/nusbog/Basilisk");
+	fetch("https://github.com/kilbaa/Basilisk");
     }
 
     printf("%s", RES);
@@ -1086,6 +1107,13 @@ void interpretOpts() {
     cur_opt->func();
 }
 
+void flag(char *key, char single_key, void (*func)(), void (*usage)()) {
+
+}
+
+void opt() {
+}
+
 int main(int argc, char **argv) {
     argv++;
     argc--;
@@ -1097,7 +1125,7 @@ int main(int argc, char **argv) {
     opts[OPT_INIT]         = (Option){ "new"       , init      , printInitUsage      , 0, 1, 1, { NULL }};
     opts[OPT_UPDATE]       = (Option){ "update"    , update    , printUpdateUsage    , 0, 0, 0, { NULL }};
     opts[OPT_AUTH]         = (Option){ "auth"      , auth      , printAuthUsage      , 0, 1, 1, { NULL }};
-    opts[OPT_PROFILE]      = (Option){ "profile"   , profile   , printProfileUsage   , 0, 1, 1, { NULL }};
+    opts[OPT_PROFILE]      = (Option){ "profile"   , profile   , printProfileUsage   , 0, 0, 1, { NULL }};
     opts[OPT_BEFRIEND]     = (Option){ "befriend"  , befriend  , printBefriendUsage  , 0, 1, 1, { NULL }};
     opts[OPT_UNFRIEND]     = (Option){ "unfriend"  , unfriend  , printUnfriendUsage  , 0, 1, 1, { NULL }};
     opts[OPT_SHADER]       = (Option){ "shader"    , shader    , printShaderUsage    , 0, 1, 1, { NULL }};
