@@ -29,19 +29,15 @@
 #define NWHE		"\e[1;37m"
 #define NGRY		"\x1b[38;2;50;50;50m"
 
-#define LINUX_SELF_PATH "/proc/self/exe/"
+#define INITFILES_PATH "initfiles/"
 
 #ifdef _WIN32
     #include <windows.h>
     #include <fileapi.h>
 
-    #define INITFILES_PATH "initfiles_win/"
-
     #define CREAT_WRITE _S_IWRITE
 #endif
 #if defined(unix) || defined(__unix__) || defined(__unix)
-    #define INITFILES_PATH "initfiles_linux/"
-
     #define CREAT_WRITE COPYMORE
 #endif
 

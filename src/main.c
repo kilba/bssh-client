@@ -21,19 +21,6 @@
     #include <locale.h>
 #endif
 
-#define HOST "192.168.10.189"
-#define PORT 8001
-
-#define QR_FUL 219 
-#define QR_BOT 220
-#define QR_TOP 223
-
-enum {
-    STATUS_ALL = 0,
-    STATUS_FRIENDS = 1,
-    STATUS_UPDATE = 2
-};
-
 enum {
     FLAG_HELP,
     FLAG_VERSION,
@@ -46,12 +33,7 @@ enum {
 enum {
     OPT_INIT,
     OPT_UPDATE,
-    OPT_AUTH,
-    OPT_PROFILE,
-    OPT_BEFRIEND,
-    OPT_UNFRIEND,
     OPT_SHADER,
-    OPT_STATUS,
 
     OPT_COUNT
 };
@@ -77,11 +59,7 @@ Option opts[OPT_COUNT];
 Option *cur_opt = NULL;
 
 #define TYPE 0
-
 #define NAME 0
-
-#define USER 1
-#define PASS 2
 
 int arg_offset = 0;
 
@@ -440,14 +418,16 @@ void init() {
     skip[0] = ".";
     skip[1] = "..";
     skip[2] = "bssh.toml";
-    for(int i = 0; i < num_elems; i++)
+    for(int i = 0; i < num_elems; i++) {
 	skip[i+3] = repl[i].search;
+    }
 
     char proj_bas_path[name_len + sizeof("/Basilisk")];
     sprintf(proj_bas_path, "%s/Basilisk", name);
 
     // Copy initfiles to new project
     copyDirSkip(path, name, 3 + num_elems, skip);
+    // Copy Basilisk to new project
     copyDir(bas_path, proj_bas_path);
 
     for(int i = 0; i < num_elems; i++) {
@@ -486,7 +466,7 @@ void init() {
 	free(new_contents);
     }
 
-    printf("Initialized a new project \"%s\"", name);
+    printf("Initialized a new project \"%s\"\n", name);
 }
 
 void shader() {
@@ -512,414 +492,6 @@ void shader() {
 	strncpy(shader_dest + offset_dest, "gs", 3);
 	copyFile(shader_path, shader_dest);
     }
-}
-
-wchar_t subscript(char ascii) {
-    const wchar_t table[] = { 
-	L'ᵃ', L'ᵇ', L'ᶜ', L'ᵈ', L'ᵉ', L'ᶠ', L'ᵍ',
-	L'ʰ', L'ⁱ', L'ʲ', L'ᵏ', L'ˡ', L'ᵐ', L'ⁿ',
-	L'ᵒ', L'ᵖ', L'ᵖ', L'ʳ', L'ˢ', L'ᵗ', L'ᵘ',
-	L'ᵛ', L'ʷ', L'ˣ', L'ʸ', L'ᶻ',
-
-	L'ᴬ', L'ᴮ', L'ꟲ', L'ᴰ', L'ᴱ', L'ꟳ', L'ᴳ',
-	L'ᴴ', L'ᴵ', L'ᴶ', L'ᴷ', L'ᴸ', L'ᴹ', L'ᴺ',
-	L'ᴼ', L'ᴾ', L'ꟴ', L'ᴿ', L'ˢ', L'ᵀ', L'ᵁ', 
-	L'ⱽ', L'ᵂ', L'ˣ', L'ʸ', L'ᶻ'
-    };
-
-    if(ascii >= 'a' && ascii <= 'z')
-	return table[ascii - 'a'];
-
-    if(ascii >= 'A' && ascii <= 'Z')
-	return table[ascii - 'A'];
-
-    return ' ';
-}
-
-/* TODO: This doesn't work on all terminals */
-void welcomeText(char *name) {
-    int strlen_name = strlen(name) + 1;
-
-    wchar_t wname[strlen_name];
-    for(int i = 0; i < strlen_name; i++)
-	wname[i] = subscript(name[i]);
-
-    _setmode(_fileno(stdout), _O_U16TEXT);
-    for(int i = 0; i < strlen_name; i++) {
-	if(i == 0)
-	    Sleep(200);
-	wchar_t curr[strlen_name];
-	for(int j = 0; j < (strlen_name-1); j++) {
-	    curr[j] = (i == j) ? wname[j] : name[j];
-	}
-	curr[strlen(name)] = '\0';
-	wprintf(L"\rWelcome, %s%S%s", NGRN, curr, RES);
-
-	Sleep(80);
-    }
-
-    _setmode(_fileno(stdout), _O_TEXT);
-    printf("%s", RES);
-}
-
-void auth();
-void checkAuthError(char *body, void (*restart)(), int err) {
-    err = clog_error();
-    switch(err) {
-	case 0: break;
-	case WSAECONNRESET: printf("%sERROR: %sConnection Reset\n", RED, RES); exit(1);
-	case WSAETIMEDOUT: printf("%sERROR: %sTimed out\n", RED, RES); exit(1);
-	case WSAECONNREFUSED: printf("%sERROR: %sConnection refused, server might be offline\n", RED, RES); exit(1);
-
-	default: printf("%sERROR: %sWSA error code %d\n", RED, RES, err); exit(1);
-    }
-
-    if(body[0] == '0')
-	return;
-
-    printf("%sERROR: %s%s\n", RED, RES, body + 1);
-
-    switch(body[0]) {
-	case '1': exit(1);
-	case '2': restart();
-	case '3': return;
-
-	default: exit(1);
-    }
-}
-
-void verifyEmail(char *user, char *mail, char *step_0, char *step_1, void (*reset)()) {
-    clog_HTTP data;
-
-    printf("Sending email verification...\n");
-
-    data = clog_InitGET(HOST, PORT);
-    clog_AddHeader(&data, "Type", step_0);
-    clog_AddHeader(&data, "User", user);
-    clog_AddHeader(&data, "Mail", mail);
-    clog_AddBody(&data, "");
-    checkAuthError(data.body, reset, clog_GET(&data));
-
-    printf("Sent!\n\n");
-
-    for(int i = 0; i < 3; i++) {
-	char emtok[64];
-	printf("Enter the token sent to your email: ");
-	userInput(emtok, 64);
-
-	data = clog_InitGET(HOST, PORT);
-	clog_AddHeader(&data, "Type", step_1);
-	clog_AddHeader(&data, "User", user);
-	clog_AddHeader(&data, "Toke", emtok);
-	clog_AddBody(&data, "");
-	checkAuthError(data.body, reset, clog_GET(&data));
-
-	if(data.body[0] == '0')
-	    return;
-    }
-}
-
-void verifyTotp(char *user, char *step, void (*callback)()) {
-    clog_HTTP data;
-    for(int i = 0; i < 3; i++) {
-	char totp[8];
-	printf("Enter the TOTP: ");
-	fflush (stdin);
-	fgets(totp, 8, stdin);
-
-	data = clog_InitGET(HOST, PORT);
-	clog_AddHeader(&data, "Type", step);
-	clog_AddHeader(&data, "User", user);
-	clog_AddHeader(&data, "Totp", totp);
-	clog_AddBody(&data, "");
-	checkAuthError(data.body, callback, clog_GET(&data));
-
-	if(data.body[0] == '0')
-	    break;
-    }
-}
-
-void autoLogin();
-void logoutAccount() {
-    writeFile(cookiePath(), "");
-    printf("Logged out\n");
-}
-
-void loginAccount() {
-    char user[32];
-
-    /* Verify email */
-    printf("Username : ");
-    userInput(user, 32);
-
-    verifyEmail(user, "", "login_0", "login_1", loginAccount);
-
-    /* Verify Totp */
-    verifyTotp(user, "login_2", loginAccount);
-
-    printf("Saving cookies to \"%s\"\n", cookiePath());
-    clog_saveCookies(cookiePath());
-}
-
-void createAccount() {
-    loadBsshData();
-    
-    clog_HTTP data;
-    char user[32], mail[64];
-
-    printf("Username (1/2) : ");
-    userInput(user, 32);
-    printf("Email    (2/2) : ");
-    userInput(mail, 32);
-    printf("\n");
-
-    verifyEmail(user, mail, "auth_0", "auth_1", createAccount);
-
-    data = clog_InitGET(HOST, PORT);
-    clog_AddHeader(&data, "Type", "auth_2");
-    clog_AddHeader(&data, "User", user);
-    clog_AddBody(&data, "");
-    checkAuthError(data.body, createAccount, clog_GET(&data));
-
-    uint8_t qr0[qrcodegen_BUFFER_LEN_MAX];
-    uint8_t tempBuffer[qrcodegen_BUFFER_LEN_MAX];
-    char *qr_buf = data.body + 1;
-
-    bool ok = qrcodegen_encodeText(qr_buf,
-	tempBuffer, qr0, qrcodegen_Ecc_MEDIUM,
-	qrcodegen_VERSION_MIN, qrcodegen_VERSION_MAX,
-	qrcodegen_Mask_AUTO, true);
-
-    if(!ok) {
-	printf("%sERROR: %sQR Code could not be generated!\n", RED, RES);
-	exit(1);
-    }
-
-    /* Print "____[ QR CODE ]____, based on qr code width" */
-    int size = qrcodegen_getSize(qr0);
-
-    float underscore_len;
-    underscore_len  = (float)size / 2.0 + 1.0;
-    underscore_len -= sizeof("[ QR Code ]") / 2.0;
-    underscore_len  = ceil(underscore_len);
-
-
-    printf("\n  ");
-    for(int i = 0; i < underscore_len; i++)
-	printf("_");
-    printf("[ QR CODE ]");
-    for(int i = 0; i < underscore_len; i++)
-	printf("_");
-    printf("\n%s  ", NWHE);
-
-    /* Print row of bottom halves */
-    for(int i = 0; i < size+2; i++)
-	printf("%c", QR_BOT);
-
-    printf("%s\n", RES);
-
-    /* Display QR Code */
-    for (int y = 0; y < size; y+=2) {
-	printf("  %s%s ", NWHEB, NGRY);
-
-	for (int x = 0; x < size; x++) {
-	    bool top = qrcodegen_getModule(qr0, x, y + 0);
-	    bool bot = qrcodegen_getModule(qr0, x, y + 1);
-	    
-	    if(top && bot) {
-		printf("%c", QR_FUL);
-	    } else if(top) {
-		printf("%c", QR_TOP);
-	    } else if(bot) {
-		printf("%c", QR_BOT);
-	    } else {
-		printf(" ");
-	    }
-	}
-	printf(" %s", RES);
-
-	switch(y) {
-	    case 2 : printf("    Username : %s%s%s", NGRN, user, RES); break;
-	    case 4 : printf("    Mail     : %s%s%s", NGRN, mail, RES); break;
-	} 
-
-	printf("\n");
-    }
-    printf("\n");
-
-    verifyTotp(user, "auth_3", createAccount);
-    clog_saveCookies(cookiePath());
-
-    printf("Welcome, %s%s%s", NGRN, user, RES);
-//    welcomeText(user);
-    exit(1);
-}
-
-void autoLogin() {
-    if(bssh.logged_in)
-	return;
-
-    clog_HTTP data = clog_InitGET(HOST, PORT);
-    clog_AddHeader( &data, "Type", "autoLogin");
-    clog_AddCookieF(&data, cookiePathChkError());
-    clog_AddBody(&data, "");
-    checkAuthError(data.body, loginAccount, clog_GET(&data));
-    
-    if(data.body[0] == '0')
-	bssh.logged_in = true;
-}
-
-void auth() {
-    char *type = cur_opt->args[0];
-    if(strcmp(type, "create") == 0) {
-	createAccount();
-	return;
-    }
-
-    if(strcmp(type, "login") == 0) {
-	loginAccount();
-	return;
-    }
-
-    if(strcmp(type, "logout") == 0) {
-	logoutAccount();
-	return;
-    }
-}
-
-void applyArt(char *key, int key_len, int indices[8][16], int posx, int posy) {
-    for(int i = 0; i < key_len; i++) {
-	int8_t c = key[i];
-
-	for(int j = 0; j < 4; j+=2) {
-	    int8_t b0 = (c >> (j + 0)) & 0x01;
-	    int8_t b1 = (c >> (j + 1)) & 0x01;
-
-	    b0 = (b0 == 0) ? -1 : 1;
-	    b1 = (b1 == 0) ? -1 : 1;
-
-	    posx += b0;
-	    posy += b1;
-
-	    if(posx >= 8 || posx < 0)
-		continue;
-
-	    if(posy >= 16 || posy < 0)
-		continue;
-
-	    indices[posx][posy]++;
-	}
-    }
-}
-
-void displayProfile(char *name, int num_pkgs) {
-    const char chars[] = " .+*~o";
-    int indices[8][16];
-
-    /* Zero initialize */
-    for(int i = 0; i < 8; i++)
-	for(int j = 0; j < 16; j++)
-	    indices[i][j] = 0;
-    
-    /* Generate SHA1 from name, then encode with Base64 */
-    char sha1[21];
-    int name_len = strlen(name);
-    SHA1(sha1, name, name_len);
-    sha1[20] = '\0';
-    size_t b64_len;
-    char *b64 = (char *)base64_encode((const unsigned char *)sha1, 20, &b64_len);
-
-    /* Fill indices[8][16] with art */
-    applyArt(b64, 20, indices, 4, 8);
-
-    /* Print name bar at center: [ username ] */
-    int len = sizeof("              ");
-    len -= sizeof("[  ]");
-    len -= name_len;
-    len /= 2;
-    len += 1;
-
-    printf("  + ");
-    for(int i = 0; i < len; i++)
-	printf(" ");
-    printf("[ %s ]", name);
-    for(int i = 0; i < len; i++)
-	printf(" ");
-    printf(" +\n%s", NBLU);
-
-    /* Print the art with colors */
-    for(int i = 0; i < 8; i++) {
-	printf("   ");
-	for(int j = 0; j < 16; j++) {
-	    int index = indices[i][j];
-	    index = (index >= 7) ? 6 : index;
-
-	    if(index >= 3) {
-		printf("%s%c%s", CYN, chars[index], NBLU);
-		continue;
-	    }
-
-	    printf("%c", chars[index]);
-	}
-
-	switch(i) {
-	    case 1: printf("  / Packages : %s%d%s", RES, 0, NBLU); break;
-	    case 2: printf("  \\ Verified : %sTRUE%s", RES, NBLU); break;
-	}
-
-	printf("\n");
-    }
-
-    printf("  %s+                  +\n", RES);
-}
-
-void profile() {
-    if(cur_opt->num_sub_opts == 0) {
-	
-	return;
-    }
-
-    char *name = cur_opt->args[0];
-    displayProfile(name, 0);
-}
-
-void befriend() {
-    loadBsshData();
-
-    clog_HTTP data;
-    char *name = cur_opt->args[0];
-
-    data = clog_InitGET(HOST, PORT);
-    clog_AddHeader( &data, "Type" , "befriend");
-    clog_AddHeader( &data, "Friend", name);
-    clog_AddCookieF(&data, cookiePathChkError());
-    clog_AddBody(&data, "");
-    checkAuthError(data.body, exitError, clog_GET(&data));
-
-    switch(data.body[1]) {
-	case '0': printf("%sFriend request sent%s\n", GRN, RES); break;
-	case '1': printf("You are now friends with %s\"%s\"%s\n", NPUR, name, RES); break;
-    }
-}
-
-void unfriend() {
-}
-
-void chkStatus() {
-    clog_HTTP data;
-    data = clog_InitGET(HOST, PORT);
-    clog_AddHeader(&data, "Type", "status");
-    clog_AddCookieF(&data, cookiePathChkError());
-    clog_AddBody(&data, "");
-    checkAuthError(data.body, exitError, clog_GET(&data));
-
-    if(data.content_len == 1) {
-	printf("Nothing new\n");
-	return;
-    }
-
-    printf("%s%s\n", NGRN, data.body + 1);
-    printf("%s", RES);
 }
 
 void printProgress(int cur_object, int tot_objects, char *color) {
@@ -1032,6 +604,7 @@ void fetch(char *url) {
     err = git_repository_open(&repo, bas_path);
     if(err != 0) {
 	if(err == GIT_ENOTFOUND) {
+	printf("%s\n", bas_path);
 	   clone(url);
 	   return;
 	}
@@ -1046,6 +619,7 @@ void fetch(char *url) {
     /* Fetch new files */
     git_fetch_options fetch_opts = GIT_FETCH_OPTIONS_INIT;
     fetch_opts.callbacks.transfer_progress = fetchProgress;
+
     err = git_remote_lookup(&remote, repo, "origin");
     err = git_remote_fetch(remote, NULL, &fetch_opts, NULL);
 
@@ -1124,12 +698,7 @@ int main(int argc, char **argv) {
 
     opts[OPT_INIT]         = (Option){ "new"       , init      , printInitUsage      , 0, 1, 1, { NULL }};
     opts[OPT_UPDATE]       = (Option){ "update"    , update    , printUpdateUsage    , 0, 0, 0, { NULL }};
-    opts[OPT_AUTH]         = (Option){ "auth"      , auth      , printAuthUsage      , 0, 1, 1, { NULL }};
-    opts[OPT_PROFILE]      = (Option){ "profile"   , profile   , printProfileUsage   , 0, 0, 1, { NULL }};
-    opts[OPT_BEFRIEND]     = (Option){ "befriend"  , befriend  , printBefriendUsage  , 0, 1, 1, { NULL }};
-    opts[OPT_UNFRIEND]     = (Option){ "unfriend"  , unfriend  , printUnfriendUsage  , 0, 1, 1, { NULL }};
     opts[OPT_SHADER]       = (Option){ "shader"    , shader    , printShaderUsage    , 0, 1, 1, { NULL }};
-    opts[OPT_STATUS]       = (Option){ "status"    , chkStatus , printStatusUsage    , 0, 0, 0, { NULL }};
 
     git_libgit2_init();
 
