@@ -172,11 +172,11 @@ bool fileExists(LPCTSTR szPath) {
          !(dwAttrib & FILE_ATTRIBUTE_DIRECTORY));
 }
 
-void createDir(char *name) {
+void createDir(char *name, bool throw_error) {
 #ifdef _WIN32
     CreateDirectory(name, NULL);
     int err_win = GetLastError();
-    if(err_win == ERROR_ALREADY_EXISTS) {
+    if(throw_error && err_win == ERROR_ALREADY_EXISTS) {
 	printf("%sERROR: %sDirectory \"%s\" already exists!\n", RED, RES, name);
 	exit(1);
     }
@@ -184,7 +184,7 @@ void createDir(char *name) {
 
 #if defined(unix) || defined(__unix__) || defined(__unix)
     struct stat st = {0};
-    if(stat(name &st) == -1) {
+    if(throw_error && stat(name &st) == -1) {
 	printf("%sERROR: %sDirectory \"%s\" already exists!\n", RED, RES, name);
 	exit(1);
     }
@@ -239,7 +239,7 @@ void copyFiles(char *source, char *destination) {
     }
 }
 
-void copyDir(char *src, char *dst);
+void copyDir(char *src, char *dst, bool overwrite);
 
 #if defined(unix) || defined(__unix__) || defined(__unix)
 int copyDirSkip(char *source, char *destination, int skip_count, char **skip) {
@@ -276,8 +276,8 @@ int copyDirSkip(char *source, char *destination, int skip_count, char **skip) {
 #endif
 
 #ifdef _WIN32
-void copyDirSkip(char *src, char *dst, int skip_count, char **skip) {
-    createDir(dst);
+void copyDirSkip(char *src, char *dst, int skip_count, char **skip, bool overwrite) {
+    createDir(dst, !overwrite);
 
     HANDLE hFind;
     WIN32_FIND_DATA FindFileData;
@@ -307,7 +307,7 @@ void copyDirSkip(char *src, char *dst, int skip_count, char **skip) {
 		sprintf(sub_dst , "%s/%s", dst, name);
 		
 		char *sub_skip[2] = { ".", ".." };
-		copyDirSkip(sub_name, sub_dst, 2, sub_skip);
+		copyDirSkip(sub_name, sub_dst, 2, sub_skip, overwrite);
 	    } else {
 		char file_path[strlen_dst + strlen_name + 2];
 		char sub_name [strlen_src + strlen_name + 2];
@@ -323,9 +323,9 @@ next: continue;
 }
 #endif
 
-void copyDir(char *src, char *dst) {
+void copyDir(char *src, char *dst, bool overwrite) {
     char *skip[2] = { ".", ".." };
-    copyDirSkip(src, dst, 2, skip);
+    copyDirSkip(src, dst, 2, skip, overwrite);
 }
 
 #endif /* BSSHSTRS_H */

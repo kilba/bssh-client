@@ -13,6 +13,7 @@
 #include <qrcodegen.h>
 #include <sha1.h>
 #include <base64.h>
+#include <help.h>
 
 #ifdef _WIN32
     #include <winsock.h>
@@ -24,7 +25,7 @@
 enum {
     FLAG_HELP,
     FLAG_VERSION,
-    FLAG_LATEST,
+    FLAG_UPDATE,
     FLAG_GEOM,
 
     FLAG_COUNT
@@ -33,10 +34,15 @@ enum {
 enum {
     OPT_INIT,
     OPT_UPDATE,
+    OPT_UGRADE,
     OPT_SHADER,
 
     OPT_COUNT
 };
+
+typedef struct {
+    unsigned char commit_hash[20];
+} Project;
 
 typedef struct {
     char *skey;
@@ -63,11 +69,17 @@ Option *cur_opt = NULL;
 
 int arg_offset = 0;
 
+char *toml_buf = NULL;
+
+// bssh data
 char *app_data_path = NULL;
 char *cookie_path = NULL;
 char *bssh_path = NULL;
 char *bas_path = NULL;
 size_t bssh_path_len = 0;
+
+// Project data
+char *project_path = NULL;
 
 typedef struct {
     int tot;
@@ -120,112 +132,6 @@ bool argCmp(char *first, char *second) {
 
 bool hasFlag(int flag) {
     return flags[flag].is_set;
-}
-
-void printInitUsage() {
-    printf("Initializes a new project\n");
-    
-    char *msg = \
-	  "\nUSAGE\n"\
-	"    bssh new <name> [flags]\n";
-
-    printf("%s", msg);
-}
-
-void printUpdateUsage() {
-    printf("Fetches the latest update\n");
-
-    char *msg = \
-	  "\nUSAGE\n"\
-	"    bssh update [flags]\n";
-
-    printf("%s", msg);
-}
-
-void printAuthUsage() {
-    printf("Authentication commands\n");
-    char *msg = \
-	  "\nUSAGE\n"\
-	"    bssh auth <command> [flags]\n"\
-	  "\nCOMMANDS\n"\
-	"    create         Creates a new account\n"\
-	"    login          Logs in to an account\n"\
-	"    logout         Logs out of the account\n";
-
-    printf("%s", msg);
-}
-
-void printHelp() {
-    char *help_msg = \
-	  "USAGE\n"\
-	"    bssh <command> <subcommands> [flags]\n"\
-	"\nCOMMANDS\n"\
-	"    new             Initialized a new project\n"\
-	"    update          Updates Basilisk to the latest release\n"\
-	"    auth            Log in or out of accounts, create accounts\n"\
-	"    profile         Check out someones profile\n"\
-	"\nFLAGS\n"\
-	"    -h, --help      Prints this menu\n"\
-	"    -v, --version   Prints the current engine version\n";
-
-    printf("%s", help_msg);
-}
-
-void printProfileUsage() {
-    char *msg = \
-	  "\nUSAGE\n"\
-	"    bssh profile <name> [flags]\n";
-
-    printf("%s\n", msg);
-}
-
-void printBefriendUsage() {
-    printf("Sends a friend request to a user\n");
-
-    char *msg = \
-	  "\nUSAGE\n"\
-	"    bssh befriend <name> [flags]\n";
-
-    printf("%s\n", msg);
-}
-
-void printUnfriendUsage() {
-    printf("Removes a friend from your friend list\n");
-
-    char *msg = \
-	  "\nUSAGE\n"\
-	"    bssh unfriend <name> [flags]\n";
-
-    printf("%s\n", msg);
-}
-
-void printShaderUsage() {
-    printf("Initializes a new shader program\n");
-
-    char *msg = \
-	  "\nUSAGE\n"\
-	"    bssh shader <name> [flags]\n"\
-	  "\nFLAGS\n"\
-	"    -g, --geom      Also creates a geometry shader\n";
-
-    printf("%s\n", msg);
-}
-
-void printStatusUsage() {
-    printf("Gets any local or remote status updates, all status\nupdates will be requested if no flags are specified\n");
-    
-    char *msg = \
-	  "\nUSAGE\n"\
-	"    bssh status [flags]\n"\
-	  "\nFLAGS\n"\
-	"    -f, --friends    Gets friend requests"\
-	"    -u, --updates    Checks if updates are available";
-
-    printf("%s\n", msg);
-}
-
-void printVersion() {
-    printf("v1.0\n");
 }
 
 void stringFlag(char *arg, int arg_len) {
@@ -359,7 +265,6 @@ void *initReplaceTable(TomlTable *table_main, int *num_elems_out) {
 	int num_elems;
     } *ret = malloc(num_elems * sizeof(struct ReplaceBuf));
 
-
     for(int i = 0; i < num_elems; i++) {
 	TomlArray *aimatch   = amatch->elements[i]->value.array;
 	TomlArray *aireplace = areplace->elements[i]->value.array;
@@ -382,6 +287,36 @@ void *initReplaceTable(TomlTable *table_main, int *num_elems_out) {
 	}
     }
     return ret;
+}
+
+void setHeadHash(git_repository *repo, Project *project) {
+    int err;
+
+    if(repo == NULL) {
+	loadBsshData();
+	err = git_repository_open(&repo, bas_path);
+	if(err != 0) {
+	    printf("%sERROR:%s Couldn't open git repository at path \"%s\" (libgit err %d)\n", RED, RES, bas_path, err);
+	    exit(1);
+	}
+    }
+
+    err = git_reference_name_to_id((git_oid *)&project->commit_hash, repo, "HEAD");
+    if(err != 0) {
+	printf("%sERROR:%s Couldn't get HEAD hash! (libgit err %d)\n", RED, RES, err);
+	exit(1);
+    }
+}
+
+void initProjectFile(char *dir, int dir_len) {
+    char path[dir_len + sizeof("/.bssh")];
+    sprintf(path, "%s/.bssh", dir);
+
+    Project project;
+    setHeadHash(NULL, &project);
+
+    printf("%s\n", path);
+    writeFile(path, (char *)&project);
 }
 
 void init() {
@@ -426,9 +361,11 @@ void init() {
     sprintf(proj_bas_path, "%s/Basilisk", name);
 
     // Copy initfiles to new project
-    copyDirSkip(path, name, 3 + num_elems, skip);
+    copyDirSkip(path, name, 3 + num_elems, skip, false);
     // Copy Basilisk to new project
-    copyDir(bas_path, proj_bas_path);
+    copyDir(bas_path, proj_bas_path, false);
+    // Create project file
+    // initProjectFile(name, name_len);
 
     for(int i = 0; i < num_elems; i++) {
 	int strlen_search = strlen(repl[i].search);
@@ -528,6 +465,13 @@ int fetchProgress(const git_transfer_progress *stats, void *payload) {
     return 0;
 }
 
+void loadProjectData() {
+    if(project_path != NULL)
+	return;
+
+    loadBsshData();
+}
+
 void loadBsshData() {
     if(bssh.engine != NULL)
 	return;
@@ -604,12 +548,12 @@ void fetch(char *url) {
     err = git_repository_open(&repo, bas_path);
     if(err != 0) {
 	if(err == GIT_ENOTFOUND) {
-	printf("%s\n", bas_path);
 	   clone(url);
 	   return;
 	}
 
 	if(err == GIT_EEXISTS) {
+	    // TODO: Attempt fix
 	    printf("%sERROR:%s Current repository is invalid!\n", RED, RES);
 	    return;
 	}
@@ -641,19 +585,25 @@ void fetch(char *url) {
 }
 
 void update() {
-    if(hasFlag(FLAG_LATEST))
-	printf("Latest\n");
-
     loadBsshData();
 
     /* Clone the repo if it's not installed, otherwise fetch newest  */
     if(!bssh.installed) {
-	clone("https://github.com/kilbaa/Basilisk");
+	clone("https://github.com/kilba/Basilisk");
     } else {
-	fetch("https://github.com/kilbaa/Basilisk");
+	fetch("https://github.com/kilba/Basilisk");
     }
 
     printf("%s", RES);
+}
+
+void upgrade() {
+    loadBsshData();
+
+    if(hasFlag(FLAG_UPDATE))
+	update();
+
+    copyDir(bas_path, "./Basilisk", true);
 }
 
 void interpretOpts() {
@@ -663,13 +613,13 @@ void interpretOpts() {
 	    return;
 	}
 
-	if(hasFlag(FLAG_VERSION)) {
-	    printVersion();
-	    return;
-	}
-
 	printHelp();
 	return;
+    }
+
+    if(hasFlag(FLAG_HELP)) {
+	cur_opt->usage();
+	exit(0);
     }
 
     if(cur_opt->num_sub_opts < cur_opt->min_sub_opts) {
@@ -681,24 +631,20 @@ void interpretOpts() {
     cur_opt->func();
 }
 
-void flag(char *key, char single_key, void (*func)(), void (*usage)()) {
-
-}
-
-void opt() {
-}
-
 int main(int argc, char **argv) {
     argv++;
     argc--;
 
     flags[FLAG_HELP]       = (Flag){ "help"    , 'h', 0 };
-    flags[FLAG_VERSION]    = (Flag){ "version" , 'v', 0 };
     flags[FLAG_GEOM]       = (Flag){ "geom"    , 'g', 0 };
+    flags[FLAG_UPDATE]     = (Flag){ "update"  , 'u', 0 };
 
     opts[OPT_INIT]         = (Option){ "new"       , init      , printInitUsage      , 0, 1, 1, { NULL }};
     opts[OPT_UPDATE]       = (Option){ "update"    , update    , printUpdateUsage    , 0, 0, 0, { NULL }};
+    opts[OPT_UGRADE]       = (Option){ "upgrade"   , upgrade   , printUpgradeUsage   , 0, 0, 0, { NULL }};
     opts[OPT_SHADER]       = (Option){ "shader"    , shader    , printShaderUsage    , 0, 1, 1, { NULL }};
+
+    toml_buf = malloc(2048);
 
     git_libgit2_init();
 
@@ -709,13 +655,12 @@ int main(int argc, char **argv) {
     interpretOpts();
 
     if(bssh.has_changed && bssh.main != NULL) {
-	char *buf = malloc(2048);
 	int buf_len = 0;
 
-	print_table(bssh.main, buf, &buf_len);
-	writeFile(bssh.path, buf);
-	free(buf);
+	print_table(bssh.main, toml_buf, &buf_len);
+	writeFile(bssh.path, toml_buf);
     }
 
+    free(toml_buf);
     return 0;
 }

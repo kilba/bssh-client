@@ -4,6 +4,7 @@ project(bssh)
 
 add_executable(${PROJECT_NAME}
 	src/main.c
+	src/help.c
 	src/toml.c
 	src/toml_write.c
 	src/net.c
