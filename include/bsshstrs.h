@@ -192,8 +192,19 @@ void createDir(char *name, bool throw_error) {
 #endif
 }
 
-void copyFile(char *src, char *dest) {
-    int err = CopyFile(src, dest, true);
+void moveFile(char *src, char *dest) {
+    if(!MoveFile(src, dest)) {
+	int err = GetLastError();
+	switch(err) {
+	    case ERROR_FILE_NOT_FOUND: printf("%sERROR: %sFile \"%s\" does not exist\n", RED, RES, src); break;
+	    case ERROR_FILE_EXISTS: printf("%sERROR: %sFile \"%s\" already exists\n", RED, RES, dest); break;
+	    default: printf("%sERROR: %sGetLastError returned %d\n", RED, RES, err);
+	}
+    }
+}
+
+void copyFile(char *src, char *dest, bool overwrite) {
+    int err = CopyFile(src, dest, !overwrite);
     /* For some reason, Microsoft decided that errors return 0 in this function */
     if(err == 0) {
 	err = GetLastError();
@@ -324,6 +335,13 @@ next: continue;
 #endif
 
 void copyDir(char *src, char *dst, bool overwrite) {
+    /*
+    SHFILEOPSTRUCT s = { 0 };
+    s.wFunc = FO_COPY;
+    s.fFlags = FOF_SILENT | FOF_NOCONFIRMATION;
+    s.pTo = dst;
+    s.pFrom = src;
+    SHFileOperation(&s);*/
     char *skip[2] = { ".", ".." };
     copyDirSkip(src, dst, 2, skip, overwrite);
 }

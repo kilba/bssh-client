@@ -24,9 +24,10 @@
 
 enum {
     FLAG_HELP,
-    FLAG_VERSION,
     FLAG_UPDATE,
     FLAG_GEOM,
+    FLAG_BSSH,
+    FLAG_LOCAL,
 
     FLAG_COUNT
 };
@@ -78,8 +79,8 @@ char *bssh_path = NULL;
 char *bas_path = NULL;
 size_t bssh_path_len = 0;
 
-// Project data
-char *project_path = NULL;
+char *exe_path;
+int exe_path_len = 0;
 
 typedef struct {
     int tot;
@@ -94,6 +95,8 @@ typedef struct {
     TomlTable *main, *engine;
 
     char *path;
+    char *local_src;
+    char *local_include;
     bool installed;
     bool has_changed;
     bool logged_in;
@@ -357,13 +360,40 @@ void init() {
 	skip[i+3] = repl[i].search;
     }
 
-    char proj_bas_path[name_len + sizeof("/Basilisk")];
-    sprintf(proj_bas_path, "%s/Basilisk", name);
+    char proj_bas_path_src[name_len + sizeof("external/Basilisk/src")];
+    char proj_bas_path_include[name_len + sizeof("external/Basilisk/include")];
+
+    sprintf(proj_bas_path_src, "%s/external/Basilisk/src", name);
+    sprintf(proj_bas_path_include, "%s/external/Basilisk/include", name);
+
+    char bas_path_src[bssh_path_len + sizeof("Basilisk/src")];
+    char bas_path_include[bssh_path_len + sizeof("Basilisk/include")];
+
+    sprintf(bas_path_src, "%sBasilisk/src", bssh_path);
+    sprintf(bas_path_include, "%sBasilisk/include", bssh_path);
+
+    if(strcmp(name, ".") == 0) {
+	createDir("./external", false);
+	createDir("./external/Basilisk", false);
+	copyDir(bas_path_src, proj_bas_path_src, false);
+	copyDir(bas_path_include, proj_bas_path_include, false);
+	printf("Added Basilisk to current project.\n");
+	return;
+    }
+
+    char proj_external_path[name_len + sizeof("external")];
+    char proj_bas_path[name_len + sizeof("external/Basilisk")];
+    sprintf(proj_external_path, "%s/external", name);
+    sprintf(proj_bas_path, "%s/external/Basilisk", name);
 
     // Copy initfiles to new project
     copyDirSkip(path, name, 3 + num_elems, skip, false);
+    createDir(proj_external_path, false);
+    createDir(proj_bas_path, false);
+
     // Copy Basilisk to new project
-    copyDir(bas_path, proj_bas_path, false);
+    copyDir(bas_path_src, proj_bas_path_src, false);
+    copyDir(bas_path_include, proj_bas_path_include, false);
     // Create project file
     // initProjectFile(name, name_len);
 
@@ -418,16 +448,16 @@ void shader() {
 
     strncpy(shader_path + offset_path, "vs", 3);
     strncpy(shader_dest + offset_dest, "vs", 3);
-    copyFile(shader_path, shader_dest);
+    copyFile(shader_path, shader_dest, false);
 
     strncpy(shader_path + offset_path, "fs", 3);
     strncpy(shader_dest + offset_dest, "fs", 3);
-    copyFile(shader_path, shader_dest);
+    copyFile(shader_path, shader_dest, false);
 
     if(hasFlag(FLAG_GEOM)) {
 	strncpy(shader_path + offset_path, "gs", 3);
 	strncpy(shader_dest + offset_dest, "gs", 3);
-	copyFile(shader_path, shader_dest);
+	copyFile(shader_path, shader_dest, false);
     }
 }
 
@@ -465,17 +495,7 @@ int fetchProgress(const git_transfer_progress *stats, void *payload) {
     return 0;
 }
 
-void loadProjectData() {
-    if(project_path != NULL)
-	return;
-
-    loadBsshData();
-}
-
-void loadBsshData() {
-    if(bssh.engine != NULL)
-	return;
-
+bool loadBsshPaths() {
     /* Get path to the executable folder */
 #ifdef _WIN32
     char *appdata = getenv("APPDATA");
@@ -487,6 +507,22 @@ void loadBsshData() {
     /* Replace '\' with '/' */
     for(int i = 0; i < bssh_path_len; i++)
 	bssh_path[i] = (bssh_path[i] == '\\') ? '/' : bssh_path[i];
+
+    // Return value of GetModuleFileName is 0 on fail (wtf)
+    char temp_exe_path[MAX_PATH];
+    int err = GetModuleFileName(NULL, temp_exe_path, MAX_PATH);
+    if(err == 0) {
+	err = GetLastError();
+	switch(err) {
+	    case ERROR_INSUFFICIENT_BUFFER: printf("%sERROR:%s Path to \"bssh.exe\" is too long!\n", RED, RES); break;
+	    default: printf("%sERROR:%s GetLastError returned %d\n", RED, RES, err); break;
+	}
+	exit(1);
+    } else {
+	exe_path_len = err;
+	exe_path = malloc(exe_path_len + 1);
+	strncpy(exe_path, temp_exe_path, exe_path_len);
+    }
 
 #endif
 
@@ -504,10 +540,12 @@ void loadBsshData() {
 
     bssh.main = toml_load_filename(bssh.path);
 
-    if(bssh.main == NULL) {
-	printf("%sERROR:%s %s does not exist!", RED, RES, bssh.path);
-	exit(1);
-    }
+    return bssh.main != NULL;
+}
+
+void loadBsshData() {
+    if(bssh.engine != NULL)
+	return;
 
     TomlValue *engine = toml_table_get(bssh.main, "Basi");
     if(engine == NULL)
@@ -517,6 +555,15 @@ void loadBsshData() {
     TomlValue *installed_toml = toml_table_get(bssh.engine, "installed");
     if(installed_toml == NULL)
 	dataWasEditedError();
+
+    TomlValue *local_src_toml = toml_table_get(bssh.engine, "local_src");
+    if(local_src_toml != NULL) {
+	bssh.local_src = local_src_toml->value.string->str;
+    }
+    TomlValue *local_include_toml = toml_table_get(bssh.engine, "local_include");
+    if(local_include_toml != NULL) {
+	bssh.local_include = local_include_toml->value.string->str;
+    }
 
     bssh.installed = installed_toml->value.boolean;
 }
@@ -584,8 +631,17 @@ void fetch(char *url) {
     printProgress(progress.tot, progress.tot, GRN);
 }
 
+void updateBssh() {
+    printf("%s\n", "updating bssh");
+}
+
 void update() {
     loadBsshData();
+
+    if(hasFlag(FLAG_BSSH)) {
+	updateBssh();
+	return;
+    }
 
     /* Clone the repo if it's not installed, otherwise fetch newest  */
     if(!bssh.installed) {
@@ -600,10 +656,34 @@ void update() {
 void upgrade() {
     loadBsshData();
 
+    createDir("./external", false);
+    createDir("./external/Basilisk", false);
+    if(hasFlag(FLAG_LOCAL)) {
+	if(bssh.local_src != NULL) {
+	    copyDir(bssh.local_src, "./external/Basilisk/src", true);
+	} else {
+	    printf("%sWARNING: %sNo local src directory found\n", YEL, RES);
+	}
+
+	if(bssh.local_include != NULL) {
+	    copyDir(bssh.local_src, "./external/Basilisk/src", true);
+	} else {
+	    printf("%sWARNING: %sNo local src directory found\n", YEL, RES);
+	}
+	exit(0);
+    }
+
     if(hasFlag(FLAG_UPDATE))
 	update();
 
-    copyDir(bas_path, "./Basilisk", true);
+    char bas_path_src[bssh_path_len + sizeof("Basilisk/src")];
+    char bas_path_include[bssh_path_len + sizeof("Basilisk/include")];
+
+    sprintf(bas_path_src, "%sBasilisk/src", bssh_path);
+    sprintf(bas_path_include, "%sBasilisk/include", bssh_path);
+
+    copyDir(bas_path_src, "./external/Basilisk/src", true);
+    copyDir(bas_path_include, "./external/Basilisk/include", true);
 }
 
 void interpretOpts() {
@@ -631,16 +711,46 @@ void interpretOpts() {
     cur_opt->func();
 }
 
+void initBssh() {
+    // Don't try to initialize if this succeeds
+    if(loadBsshPaths())
+	return;
+/*
+    char bssh_exe[exe_path_len + sizeof("/bssh.exe")];
+    char bssh_old_exe[exe_path_len + sizeof("/bssh-old.exe")];
+
+    sprintf(bssh_exe, "%s/bssh.exe", exe_path);
+    sprintf(bssh_old_exe, "%s/bssh-old.exe", exe_path);
+
+    printf("%s\n", bssh_exe);
+    printf("%s\n", bssh_old_exe);
+    //moveFile(bssh_exe, bssh_old_exe);
+//    copyFile("C:\\Users\\henry\\Desktop\\test21\\bssh.exe", "build\\bssh.exe", true);
+
+    clog_HTTP http = clog_InitGET("https://basilisk.sh/", NULL, 443);
+    printf("%s\n", http.data);
+    int x = clog_GET(&http);
+    printf("%s\n", http.data);
+    printf("%d\n", x);
+    printf("%d\n", clog_lastError());
+*/
+    exit(0);
+}
+
 int main(int argc, char **argv) {
+    initBssh();
+
     argv++;
     argc--;
 
     flags[FLAG_HELP]       = (Flag){ "help"    , 'h', 0 };
     flags[FLAG_GEOM]       = (Flag){ "geom"    , 'g', 0 };
     flags[FLAG_UPDATE]     = (Flag){ "update"  , 'u', 0 };
+    flags[FLAG_BSSH]       = (Flag){ "bssh"    , 'b', 0 };
+    flags[FLAG_LOCAL]      = (Flag){ "local"   , 'l', 0 };
 
     opts[OPT_INIT]         = (Option){ "new"       , init      , printInitUsage      , 0, 1, 1, { NULL }};
-    opts[OPT_UPDATE]       = (Option){ "update"    , update    , printUpdateUsage    , 0, 0, 0, { NULL }};
+    opts[OPT_UPDATE]       = (Option){ "update"    , update    , printUpdateUsage    , 0, 0, 1, { NULL }};
     opts[OPT_UGRADE]       = (Option){ "upgrade"   , upgrade   , printUpgradeUsage   , 0, 0, 0, { NULL }};
     opts[OPT_SHADER]       = (Option){ "shader"    , shader    , printShaderUsage    , 0, 1, 1, { NULL }};
 

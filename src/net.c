@@ -1,19 +1,16 @@
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 #include <net.h>
+#include <auth.h>
 
 void clog_emptyCallback(Clog stream) { };
 
 clog_callback callbacks[CLOG_CALLBACK_COUNT];
 int error = 0;
-
-
-/* Will be NULL until "clog_InitGET" is called,
- * then it will be allocated 2048 bytes. This will
- * be freed upon calling "clog_FreeGET" */
-char *CLOG_INTERNAL_GET_BUF = NULL;
 
 char* clog_readFile(char *path, int *content_len, int *errcode) {
     if(path == 0) {
@@ -56,66 +53,69 @@ void clog_writeFile(char *name, char *data) {
     }
 }
 
-int clog_GET(clog_HTTP *data) {
+int clog_GET(clog_HTTP *http) {
     int err, siz;
 
     Clog chost;
-    err = clog_conn(data->host, data->port, &chost);
-    if(err == -1)
+    err = clog_conn(http->host, http->port, &chost);
+    if(err < 0)
 	return err;
 
-    err = clog_send(&chost, CLOG_INTERNAL_GET_BUF, data->offset);
-    if(err == -1)
+    err = clog_send(&chost, http->data, http->offset);
+    if(err < 0)
 	return err;
 
-    siz = clog_recv( chost, CLOG_INTERNAL_GET_BUF, 2048);
-    if(siz == -1)
+    siz = clog_recv(chost, http->data, 2048);
+    if(siz < 0)
 	return siz;
 
-    CLOG_INTERNAL_GET_BUF[siz] = '\0';
-    data->body = strstr(CLOG_INTERNAL_GET_BUF, "\r\n\r\n") + 4;
-    int total_size = data->body - CLOG_INTERNAL_GET_BUF;
-    data->content_len = siz - total_size;
+    printf("received : %d\n", siz);
 
+    http->data[siz] = '\0';
+    http->body = strstr(http->data, "\r\n\r\n") + 4;
+    int total_size = http->body - http->data;
+    http->content_len = siz - total_size;
     return 0;
 }
 
-clog_HTTP clog_InitGET(char *host, int port) {
+clog_HTTP clog_InitGET(char *host, char *path, int port) {
+    if(path == NULL)
+	path = "";
+
     clog_HTTP http;
     http.host = host;
     http.port = port;
     http.offset = 0;
 
-    if(CLOG_INTERNAL_GET_BUF == NULL)
-	CLOG_INTERNAL_GET_BUF = malloc(2048);
-
-    http.offset += sprintf(CLOG_INTERNAL_GET_BUF, "%s %s\r\n", CLOG_BEG_HTTP_1_1, host);
+    http.data = malloc(2048);
+    http.offset += sprintf(http.data, "GET /%s HTTP/1.1\r\n", path);
+    clog_AddHeader(&http, "Host", host);
 
     return http;
 }
 
-void clog_AddHeader(clog_HTTP *data, char *key, char *value) {
-    data->offset += sprintf(
-	CLOG_INTERNAL_GET_BUF + data->offset,
+void clog_AddHeader(clog_HTTP *http, char *key, char *value) {
+    http->offset += sprintf(
+	http->data + http->offset,
 	"%s: %s\r\n",
 	key, value
     );
 }
 
-void clog_AddCookieF(clog_HTTP *data, char *path) {
+void clog_AddCookieF(clog_HTTP *http, char *path) {
     int err, len;
     char *fdata = clog_readFile(path, &len, &err);
     fdata[strcspn(fdata, "\r\n")] = 0;
-    data->offset += sprintf(
-	CLOG_INTERNAL_GET_BUF + data->offset,
+    http->offset += sprintf(
+	http->data + http->offset,
 	"Cookie: %s\r\n",
 	fdata
     );
     free(fdata);
 }
 
-void clog_saveCookies(char *path) {
-    char *cookie_data = strstr(CLOG_INTERNAL_GET_BUF, "Set-Cookie:");
+void clog_saveCookies(clog_HTTP *http, char *path) {
+    char *cookie_data = strstr(http->data, "Set-Cookie:");
     if(cookie_data == NULL)
 	return;
     cookie_data += sizeof("Set-Cookie:");
@@ -128,15 +128,22 @@ void clog_saveCookies(char *path) {
     clog_writeFile(path, save);
 }
 
-void clog_AddBody(clog_HTTP *data, char *body) {
-    data->offset += sprintf(
-	CLOG_INTERNAL_GET_BUF + data->offset,
-	"\r\n%s",
-	body
-    );
+void clog_AddBody(clog_HTTP *http, char *body) {
+    if(body == NULL)
+	body = "";
+
+    int len = strlen(body);
+
+    // Set Content-Length header before body
+    char content_length[8];
+    sprintf(content_length, "%d", len);
+    clog_AddHeader(http, "Content-Length", content_length);
+    
+    // Set body
+    memcpy(http->data + http->offset, "\r\n", 2);
+    memcpy(http->data + http->offset + 2, body, len);
+    http->offset += 2 + len;
 }
-
-
 
 void clog_listener(int type, clog_callback callback) {
     if(callback == NULL)
@@ -145,7 +152,7 @@ void clog_listener(int type, clog_callback callback) {
     callbacks[type] = callback;
 }
 
-int clog_error() {
+int clog_lastError() {
     int last = error;
     error = 0;
     return last;
@@ -180,6 +187,8 @@ int clog_recv(Clog str, char *msg, int size) {
 }
 
 int clog_conn(char* host, int port, Clog *out) {
+    authenticate();
+    return 0;
     WSADATA wsa;
     Clog this;
 
@@ -194,11 +203,30 @@ int clog_conn(char* host, int port, Clog *out) {
 	return -1;
     }
 
-    // Socket Init
+    // Convert domain to ip
+    bool is_domain = false;
+    for(int i = 0; i < strlen(host); i++) {
+	if(host[i] >= 'A' && host[i] <= 'z') {
+	    is_domain = true;
+	    break;
+	}
+    }
+
     struct sockaddr_in server;
-    server.sin_addr.s_addr = inet_addr(host);
-    server.sin_family      = AF_INET;
-    server.sin_port        = htons(port);
+    if(is_domain) {
+	struct addrinfo* res = NULL;
+	char port_str[16];
+	sprintf(port_str, "%d", port);
+	int err = getaddrinfo(host, port_str, NULL, &res);
+	if(err != 0)
+	    return -1;
+
+	server = *(struct sockaddr_in *)res->ai_addr;
+    } else {
+	server.sin_addr.s_addr = inet_addr(host);
+	server.sin_family      = AF_INET;
+	server.sin_port        = htons(port);
+    }
 
     // Connect
     if (connect(this.sock_tcp, (struct sockaddr*)&server , sizeof(server)) < 0) {

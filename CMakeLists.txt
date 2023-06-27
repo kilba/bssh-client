@@ -8,6 +8,7 @@ add_executable(${PROJECT_NAME}
 	src/toml.c
 	src/toml_write.c
 	src/net.c
+	src/auth.c
 	src/sha1.c
 	src/base64.c
 	src/qrcodegen.c
@@ -32,6 +33,7 @@ target_link_libraries(${PROJECT_NAME}
 	rpcrt4
 	z
 	crypt32
+	secur32
 )
 
 target_compile_options(${PROJECT_NAME} PRIVATE -Wall)

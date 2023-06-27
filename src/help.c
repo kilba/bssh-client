@@ -15,7 +15,9 @@ void printUpdateUsage() {
 
     char *msg = \
 	  "\nUSAGE\n"\
-	"    bssh update [flags]\n";
+	"    bssh update [flags]\n"\
+	  "\nFLAGS\n"\
+	"    -b --bssh      Updates bssh\n";
 
     printf("%s", msg);
 }
@@ -42,7 +44,7 @@ void printHelp() {
 	"    update          Updates Basilisk to the latest release\n"\
 	"    upgrade         Updates the current project\n"\
 	"\nFLAGS\n"\
-	"    -h, --help      Prints this menu\n"\
+	"    -h, --help      Prints help for a command\n"\
     ;
 
     printf("%s", help_msg);

@@ -43,6 +43,7 @@ typedef struct {
 } clog_Cookie;
 
 typedef struct {
+    char *data;
     char *body;
     char *host;
     int port;
@@ -54,18 +55,16 @@ typedef struct {
 } clog_HTTP;
 
 #define CLOG_HEADER(key, value) (clog_Header){ key, value }
-#define CLOG_BEG_HTTP_1_1 "GET / HTTP/1.1\r\nHost: "
-#define CLOG_END_HTTP_1_1 "Connection: close\r\n\r\n"
 
-int clog_GET(clog_HTTP *data);
-clog_HTTP clog_InitGET(char *host, int port);
-void clog_AddHeader(clog_HTTP *data, char *key, char *value);
-void clog_AddCookieF(clog_HTTP *data, char *path);
-void clog_saveCookies(char *path);
-void clog_AddBody(clog_HTTP *data, char *body);
+int clog_GET(clog_HTTP *http);
+clog_HTTP clog_InitGET(char *host, char *path, int port);
+void clog_AddHeader(clog_HTTP *http, char *key, char *value);
+void clog_AddCookieF(clog_HTTP *http, char *path);
+void clog_saveCookies(clog_HTTP *http, char *path);
+void clog_AddBody(clog_HTTP *http, char *body);
 
 void clog_getStream(Clog *str);
-int clog_error();
+int clog_lastError();
 void clog_listener(int type, void (*callback)());
 int clog_send(Clog *stream, char *data, int data_len);
 int clog_conn(char *host, int port, Clog *out);
