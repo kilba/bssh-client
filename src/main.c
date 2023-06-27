@@ -98,6 +98,7 @@ typedef struct {
     char *local_src;
     char *local_include;
     char *local_cmake;
+    char *local_external;
     bool installed;
     bool has_changed;
     bool logged_in;
@@ -364,18 +365,22 @@ void init() {
     char proj_bas_path_src[name_len + sizeof("external/Basilisk/src")];
     char proj_bas_path_include[name_len + sizeof("external/Basilisk/include")];
     char proj_bas_path_cmake[name_len + sizeof("external/Basilisk/CMakeLists.txt")];
+    char proj_bas_path_external[name_len + sizeof("external/Basilisk/external")];
 
     sprintf(proj_bas_path_src, "%s/external/Basilisk/src", name);
     sprintf(proj_bas_path_include, "%s/external/Basilisk/include", name);
     sprintf(proj_bas_path_cmake, "%s/external/Basilisk/CMakeLists.txt", name);
+    sprintf(proj_bas_path_external, "%s/external/Basilisk/external", name);
 
     char bas_path_src[bssh_path_len + sizeof("Basilisk/src")];
     char bas_path_include[bssh_path_len + sizeof("Basilisk/include")];
     char bas_path_cmake[bssh_path_len + sizeof("Basilisk/CMakeLists.txt")];
+    char bas_path_external[bssh_path_len + sizeof("Basilisk/external")];
 
     sprintf(bas_path_src, "%sBasilisk/src", bssh_path);
     sprintf(bas_path_include, "%sBasilisk/include", bssh_path);
     sprintf(bas_path_cmake, "%sBasilisk/CMakeLists.txt", bssh_path);
+    sprintf(bas_path_external, "%sBasilisk/external", bssh_path);
 
     if(strcmp(name, ".") == 0) {
 	createDir("./external", false);
@@ -383,6 +388,7 @@ void init() {
 	copyDir(bas_path_src, proj_bas_path_src, false);
 	copyDir(bas_path_include, proj_bas_path_include, false);
 	copyFile(bas_path_cmake, proj_bas_path_cmake, false);
+	copyDir(bas_path_external, proj_bas_path_external, false);
 	printf("Added Basilisk to current project.\n");
 	return;
     }
@@ -396,11 +402,12 @@ void init() {
     copyDirSkip(path, name, 3 + num_elems, skip, false);
     createDir(proj_external_path, false);
     createDir(proj_bas_path, false);
-    copyFile(bas_path_cmake, proj_bas_path_cmake, false);
 
     // Copy Basilisk to new project
     copyDir(bas_path_src, proj_bas_path_src, false);
     copyDir(bas_path_include, proj_bas_path_include, false);
+    copyFile(bas_path_cmake, proj_bas_path_cmake, false);
+    copyDir(bas_path_external, proj_bas_path_external, false);
     // Create project file
     // initProjectFile(name, name_len);
 
@@ -575,6 +582,10 @@ void loadBsshData() {
     if(local_cmake_toml != NULL) {
 	bssh.local_cmake = local_cmake_toml->value.string->str;
     }
+    TomlValue *local_external_toml = toml_table_get(bssh.engine, "local_external");
+    if(local_cmake_toml != NULL) {
+	bssh.local_external = local_external_toml->value.string->str;
+    }
 
     bssh.installed = installed_toml->value.boolean;
 }
@@ -687,6 +698,12 @@ void upgrade() {
 	} else {
 	    printf("%sWARNING: %sNo local CMakeLists.txt found\n", YEL, RES);
 	}
+
+	if(bssh.local_external != NULL) {
+	    copyFile(bssh.local_external, "./external/Basilisk/external", true);
+	} else {
+	    printf("%sWARNING: %sNo local external directory found\n", YEL, RES);
+	}
 	exit(0);
     }
 
@@ -696,14 +713,17 @@ void upgrade() {
     char bas_path_src[bssh_path_len + sizeof("Basilisk/src")];
     char bas_path_include[bssh_path_len + sizeof("Basilisk/include")];
     char bas_path_cmake[bssh_path_len + sizeof("Basilisk/CMakeLists.txt")];
+    char bas_path_external[bssh_path_len + sizeof("Basilisk/external")];
 
     sprintf(bas_path_src, "%sBasilisk/src", bssh_path);
     sprintf(bas_path_include, "%sBasilisk/include", bssh_path);
     sprintf(bas_path_cmake, "%sBasilisk/CMakeLists.txt", bssh_path);
+    sprintf(bas_path_external, "%sBasilisk/external", bssh_path);
 
     copyDir(bas_path_src, "./external/Basilisk/src", true);
     copyDir(bas_path_include, "./external/Basilisk/include", true);
     copyFile(bas_path_cmake, "./external/Basilisk/CMakeLists.txt", true);
+    copyDir(bas_path_external, "./external/Basilisk/external", true);
 }
 
 void interpretOpts() {
