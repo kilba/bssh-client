@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <iostream>
 
 void printInitUsage() {
     printf("Initializes a new project\n");
@@ -50,6 +51,12 @@ void printHelp() {
     printf("%s", help_msg);
 }
 
+void printConfigUsage() {
+    std::cout << 
+	  "\nUSAGE\n"
+	"    bssh config\n\n";
+}
+
 void printBefriendUsage() {
     printf("Sends a friend request to a user\n");
 
@@ -66,18 +73,6 @@ void printUnfriendUsage() {
     char *msg = \
 	  "\nUSAGE\n"\
 	"    bssh unfriend <name> [flags]\n";
-
-    printf("%s\n", msg);
-}
-
-void printShaderUsage() {
-    printf("Initializes a new shader program\n");
-
-    char *msg = \
-	  "\nUSAGE\n"\
-	"    bssh shader <name> [flags]\n"\
-	  "\nFLAGS\n"\
-	"    -g, --geom      Also creates a geometry shader\n";
 
     printf("%s\n", msg);
 }

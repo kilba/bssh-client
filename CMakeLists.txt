@@ -3,8 +3,8 @@ cmake_minimum_required(VERSION 3.23.2)
 project(bssh)
 
 add_executable(${PROJECT_NAME}
-	src/main.c
-	src/help.c
+	src/main.cpp
+	src/help.cpp
 	src/toml.c
 	src/toml_write.c
 	src/net.c
