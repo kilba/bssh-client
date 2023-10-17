@@ -1,3 +1,4 @@
+#include <cpr/cpr.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
@@ -8,21 +9,10 @@
 #include <conio.h>
 
 #include <json.hpp>
-#include <net.h>
 #include <git2.h>
 #include <bsshstrs.hpp>
-#include <qrcodegen.h>
-#include <sha1.h>
-#include <base64.h>
 #include <help.hpp>
 #include <bssh.hpp>
-
-#ifdef _WIN32
-    #include <winsock.h>
-    #include <windows.h>
-    #include <wchar.h>
-    #include <locale.h>
-#endif
 
 Flag flags[FLAG_COUNT];
 std::map<std::string, std::shared_ptr<Option>> opts;
@@ -126,7 +116,6 @@ void init() {
     loadBsshData();
 
     if(name == ".") {
-	createDir("./external");
 	createDir("./external/Basilisk");
 	for(unsigned int i = 0; i < json["files"].size(); i++) {
 	    copyDir(
@@ -141,7 +130,6 @@ void init() {
 
     // Copy initfiles to new project
     copyDir(bssh_path + "initfiles/", name, false);
-    createDir(name + "/external");
     createDir(name + "/external/Basilisk");
 
     // Copy Basilisk to new project
@@ -314,7 +302,6 @@ void update() {
 void upgrade() {
     loadBsshData();
 
-    createDir("./external");
     createDir("./external/Basilisk");
     if(hasFlag(FLAG_LOCAL)) {
 	for(unsigned int i = 0; i < json["files"].size(); i++) {
@@ -375,7 +362,16 @@ void opt(std::string name, void (*func)(), void (*help)(), int num_sub_opts = 0,
 
 int main(int argc, char **argv) {
     loadBsshPaths();
+/*
+    cpr::Response t = cpr::Post(
+	cpr::Url{"https://localhost:7031/Account"}, cpr::Payload{{"account", "{\"name\":\"test\",\"creationDate\":\"2023-08-05T09:18:41.2892579+02:00\"}"}},
+	cpr::Header{{"Content-Type", "application/json"}}
+    );
 
+    std::cout << t.text << std::endl;
+
+    return 0;
+    */
     argv++;
     argc--;
 
